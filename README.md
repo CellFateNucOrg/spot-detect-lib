@@ -1,0 +1,1 @@
+# spot-detect-lib
