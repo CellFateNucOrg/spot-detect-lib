@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+# new for sbatch errors and outputs
+*.out
+*.err

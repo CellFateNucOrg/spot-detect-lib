@@ -9,7 +9,7 @@ from pathlib import Path
 from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils.spot_analysis import (
+from spot_analysis import (
     detect_spots_MPHD,
     analyze_spots,
     visualize_results
