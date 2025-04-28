@@ -1,7 +1,6 @@
 # utils.py
 
 import os
-import logging
 import random
 import time
 from pathlib import Path
@@ -21,29 +20,6 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
-def setup_logger(
-    name: str,
-    log_file: Path = None,
-    level: int = logging.INFO
-) -> logging.Logger:
-    """
-    Configure and return a logger that writes to stdout and optionally to file.
-    """
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        logger.setLevel(level)
-        fmt = logging.Formatter("%(asctime)s — %(name)s — %(levelname)s — %(message)s")
-
-        ch = logging.StreamHandler()
-        ch.setFormatter(fmt)
-        logger.addHandler(ch)
-
-        if log_file:
-            fh = logging.FileHandler(str(log_file))
-            fh.setFormatter(fmt)
-            logger.addHandler(fh)
-
-    return logger
 
 
 def seed_everything(seed: int = 42):

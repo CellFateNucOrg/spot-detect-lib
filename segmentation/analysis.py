@@ -7,6 +7,12 @@ from skimage.measure import regionprops_table
 from scipy.ndimage import distance_transform_edt
 from pathlib import Path
 from typing import Tuple, List
+from bioio import BioImage
+import bioio_nd2
+import bioio_tifffile
+from .utils import timeit
+from .logger import logger
+
 
 class DistanceAnalyzer:
     """
@@ -31,6 +37,7 @@ class DistanceAnalyzer:
         for d in (self.out_dist, self.out_nuc):
             d.mkdir(parents=True, exist_ok=True)
 
+    @timeit
     def run_for_position(self, position_id: str) -> None:
         """
         - Load raw ND2 (or TIFF) per‐timepoint.
@@ -41,7 +48,10 @@ class DistanceAnalyzer:
         df_nuc = []
         raw_path = self.raw_dir / f"{position_id}.nd2"
         img5d = BioImage(raw_path, reader=bioio_nd2.Reader)
+
+
         for t in range(img5d.dims.T):
+            logger.info(f"    t={t:02d}: computing regionprops")
             img = img5d.get_image_data("ZYXC", T=t)
             mask = BioImage(
                 self.seg_dir / f"{position_id}_t{t:02d}.tif",
@@ -64,9 +74,12 @@ class DistanceAnalyzer:
             df_rp["timepoint"] = t
             df_rp["id"] = position_id
 
+            anisotropy = np.round(img5d.physical_pixel_sizes.Z / img5d.physical_pixel_sizes.X, 0)
+
             # compute distance‐intensity profiles
-            profiles = self._compute_profiles(df_rp)
+            profiles = self._compute_profiles(df_rp, anisotropy)
             df_nuc.append(profiles)
+            
 
         if not df_nuc:
             return
@@ -79,8 +92,13 @@ class DistanceAnalyzer:
             columns=["intensity_profile_spots","intensity_profile_nuc"]
         )
         df_csv.to_csv(self.out_nuc / f"{position_id}.csv", index=False)
-
-    def _compute_profiles(self, df_rp: pd.DataFrame) -> pd.DataFrame:
+        # After writing the per‐position CSV, split out per‐timepoint tables
+        for t, df_t in df_csv.groupby("timepoint"):
+            # e.g. nuclei/pos1_t00.csv, nuclei/pos1_t01.csv, …
+            df_t.to_csv(self.out_nuc / f"{position_id}_t{t:02d}.csv", index=False)
+        logger.info(f"✅ Completed analysis for {position_id}")
+        
+    def _compute_profiles(self, df_rp: pd.DataFrame, anisotropy: float) -> pd.DataFrame:
         """
         For each row in regionprops DataFrame:
           1. extract central 2D slice from 3D mask
@@ -115,7 +133,7 @@ class DistanceAnalyzer:
                 "bb_dimZ": mask3d.shape[0],
                 "bb_dimY": mask3d.shape[1],
                 "bb_dimX": mask3d.shape[2],
-                "anisotropy": np.round(img5d.physical_pixel_sizes.Z/img5d.physical_pixel_sizes.X,0),
+                "anisotropy": anisotropy,
                 "intensity_profile_spots": prof_spot,
                 "intensity_profile_nuc": prof_nuc,
             }

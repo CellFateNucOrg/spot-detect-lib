@@ -11,6 +11,9 @@ from aicsimageio import AICSImage
 from .io import ImageIO, get_anisotropy
 from torch.serialization import DEFAULT_PROTOCOL
 import torch
+from .utils import timeit
+from .logger import logger
+
 
 class Segmenter:
     """
@@ -70,6 +73,7 @@ class Segmenter:
         """
         return edt.edt(masks > 0, anisotropy=anisotropy).astype(np.float32)
 
+    @timeit
     def run_on_directory(
         self,
         file_index: "pd.DataFrame",
@@ -81,9 +85,11 @@ class Segmenter:
         out_seg_dir.mkdir(parents=True, exist_ok=True)
         out_edt_dir.mkdir(parents=True, exist_ok=True)
 
+        logger.info(f"Starting segmentation on {len(file_index)} positions")
         for _, row in file_index.iterrows():
             pos_id = row["id"]
             raw_path = Path(row["raw_path"])
+            logger.info(f"Segmenting position {pos_id}")
             denoised_path = Path(row["denoised_path"])
 
             # compute anisotropy from raw ND2 metadata
@@ -96,6 +102,7 @@ class Segmenter:
                 img5d = AICSImage(str(raw_path))
 
             for t in range(img5d.dims.T):
+                logger.info(f"{t:02d}: loading volume and running Cellpose")
                 vol = img5d.get_image_data("CZYX", T=t)
                 nuc_vol = vol[self.nuc_channel : self.nuc_channel + 1]
 
@@ -106,6 +113,8 @@ class Segmenter:
                 edt_path = out_edt_dir / f"{pos_id}_t{t:02d}.tif"
                 ImageIO.write_tiff(seg_path, masks)
                 ImageIO.write_tiff(edt_path, edt_map)
-
+                logger.info(f"t={t:02d}: saving masks and EDT maps")
                 if qc and qc_func:
                     qc_func(vol, masks, pos_id, t)
+
+            logger.info("All positions segmented")

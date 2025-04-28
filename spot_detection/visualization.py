@@ -152,7 +152,7 @@ def plot_nuclei_stats(combined_df, output_dir):
     plt.subplot(1, 2, 2)
     sns.scatterplot(data=combined_df, x='volume', y='spot_count', alpha=0.6)
     plt.title('Nuclear Volume vs Spot Count')
-    plt.xlabel('Nuclear Volume (μm³)')
+    plt.xlabel('Nuclear Volume')
     plt.ylabel('Number of Spots')
     
     plt.tight_layout()

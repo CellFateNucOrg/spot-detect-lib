@@ -39,12 +39,6 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir):
 
         spot_path = os.path.join(spots_dir, f"{base_id}_n2v_spots.csv")
         if not os.path.exists(spot_path):
-1 ЛИПНЯ 2025 Р. 490 БЕРН
-￼
-2/3
-￼
-￼
-Ctrl+M
 
             print(f"No spots found for {base_id}")
             continue

@@ -2,10 +2,10 @@
 
 import click
 from pathlib import Path
-from segmentation.io import FileIndex, ImageIO
-from segmentation.segment import Segmenter
-from segmentation.qc import plot_segmentation_slices
-from segmentation.analysis import DistanceAnalyzer
+from .io import FileIndex, ImageIO
+from .qc import plot_segmentation_slices
+from .analysis import DistanceAnalyzer
+from .logger import logger
 
 @click.group()
 def cli():
@@ -20,6 +20,8 @@ def cli():
 @click.option('--out-root',     required=True,  type=Path, help="Root output folder")
 @click.option('--gpu/--cpu',    default=True,      help="Toggle GPU acceleration")
 @click.option('--do-qc/--no-qc', default=False,    help="Save segmentation QC images")
+
+
 def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc):
     """
     1. Build file index (raw + optional denoised)  
@@ -31,6 +33,7 @@ def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc):
     fi = FileIndex(raw_dir, denoised_dir, idx_csv)
     df = fi.build(pattern)
 
+    from .segment import Segmenter
     # 2. segment + edt
     seg = Segmenter(model_path=model, gpu=gpu)
     seg.run_on_directory(
@@ -53,6 +56,7 @@ def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc):
 @click.option('--out-root', required=True, type=Path, help="Same out-root as above")
 @click.option('--spot-ch',  default=1, show_default=True, help="Spot channel index")
 @click.option('--nuc-ch',   default=0, show_default=True, help="Nucleus channel index")
+
 def analyze(raw_dir, seg_dir, out_root, spot_ch, nuc_ch):
     """
     1. Compute distance–intensity profiles per position  
@@ -62,24 +66,32 @@ def analyze(raw_dir, seg_dir, out_root, spot_ch, nuc_ch):
     da = DistanceAnalyzer(
         raw_dir=raw_dir,
         seg_dir=seg_dir,
-        output_dist_dir=out_root/"dist_profiles",
-        output_nuclei_dir=out_root/"nuclei_stats",
+        output_dist_dir=out_root/"dist",
+        output_nuclei_dir=out_root/"nuclei",
         spot_channel=spot_ch,
         nuc_channel=nuc_ch
     )
 
     # run per‐position
+    logger.info("Starting full distance analysis")
     for p in raw_dir.glob("*"):
-        if p.suffix.lower() in (".nd2", ".czi", ".tif"):
+        if p.suffix.lower() in (".nd2", ".czi", ".tif") and not p.stem.endswith("_max"):
+            logger.info(f"Submitting analysis for {p.stem}")
             da.run_for_position(p.stem)
 
     # aggregate
+    logger.info("Collecting per-position CSVs into one summary")
     da.collect_all_nuclei_csv(
-        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".czi", ".tif")]
+        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".czi", ".tif") and not p.stem.endswith("_max")]
     )
+    logger.info("Collecting all distance profiles into one pickle")
     da.collect_all_dist_profiles(
-        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".czi", ".tif")]
+        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".czi", ".tif") and not p.stem.endswith("_max")]
     )
+    logger.info("Distance analysis complete")
 
-if __name__ == '__main__':
+
+
+    
+if __name__ == "__main__":
     cli()
