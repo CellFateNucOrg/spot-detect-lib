@@ -7,6 +7,7 @@ import numpy as np
 from skimage import filters, feature, measure, morphology, segmentation
 import re
 import ast
+from scipy import ndimage
 from scipy.stats import norm
 from tqdm import tqdm
 import seaborn as sns
@@ -38,7 +39,7 @@ def detect_spots_MPHD(image_path, spot_channel=1,
     """
     # Load image
     img_4d = bioio.BioImage(image_path, reader=bioio_tifffile.Reader)
-    img_raw = img_4d.get_image_data("ZYX", T=0, C=spot_channel).astype(np.float32)
+    img_raw = img_4d.get_image_data("ZYX", C=spot_channel).astype(np.float32)
     
     # Normalize to [0,1] based on image statistics
     img = (img_raw - img_raw.min()) / (img_raw.max() - img_raw.min() + 1e-6)
@@ -63,8 +64,14 @@ def detect_spots_MPHD(image_path, spot_channel=1,
     
     # 3D h-dome transformation
     seed = np.clip(smoothed - h, 0, None)
-    footprint = morphology.ball(1)
-    reconstructed = morphology.reconstruction(seed, smoothed, method='dilation', footprint=footprint)
+    footprint = morphology.ball(5)
+    reconstructed = morphology.reconstruction(
+        seed=seed,
+        mask=smoothed,
+        method='dilation',
+        footprint=footprint
+    )
+
     hdome = smoothed - reconstructed
     
     # Adaptive peak threshold
@@ -136,6 +143,7 @@ def detect_spots_MPHD(image_path, spot_channel=1,
 
     return df, img, hdome, labels
 
+
 def load_nuclei_data(nuclei_csv_path):
     """Load nuclei data with array columns parsing"""
     df = pd.read_csv(nuclei_csv_path)
@@ -164,10 +172,10 @@ def count_spots_in_nuclei(spots_df, mask_path, nuclei_df):
     mask = mask_img.get_image_data("ZYX", T=0, C=0)
     
     # Handle physical pixel sizes
-    try:
-        pixel_sizes = mask_img.physical_pixel_sizes
-    except AttributeError:
-        pixel_sizes = (1.0, 1.0, 1.0)
+    # try:
+    #     pixel_sizes = mask_img.physical_pixel_sizes()
+    # except AttributeError:
+    pixel_sizes = (1.0, 1.0, 1.0)
     
     # Convert coordinates with pixel size adjustment
     spots_df = spots_df.copy()
@@ -342,7 +350,7 @@ def analyze_spots(
     - mask_path: Path to the nuclei mask file
     - output_dir: Directory to save output files (optional)
     - plot: Whether to generate and save plots (default: False)
-    
+    bioio_tifffile
     Returns:
     - Path to the mapped spots CSV file
     - Path to the nuclei metrics CSV file
@@ -353,7 +361,7 @@ def analyze_spots(
         nuclei_df = load_nuclei_data(nuclei_csv_path)
         
         # Perform analysis
-        spots_mapped, nuclei_counts = count_spots_in_nuclei(spots_df, mask_path, nuclei_df)
+        spots_mapped, nuclei_counts, _ = count_spots_in_nuclei(spots_df, mask_path, nuclei_df)
         
         # Calculate aspect ratios and filter
         nuclei_counts['xy_ratio'] = nuclei_counts.apply(

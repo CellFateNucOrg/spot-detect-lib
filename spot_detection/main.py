@@ -4,7 +4,8 @@ import sys
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
-from batch_spot_analysis import batch_process_images, plot_summary_statistics
+from batch_spot_analysis import batch_process_images, plot_summary_statistics, split_5d_tiff_to_timepoints
+
 from post_processing import analyze_nuclei_and_spots
 import random
 from visualization import render_nuclei_3d
@@ -19,6 +20,9 @@ def parse_args():
     p.add_argument("--nuclei-csv-dir",  type=Path, required=True)
     p.add_argument("--output-dir",      type=Path, required=True)
     return p.parse_args()
+
+
+
 
 def random_qc_visualization(spots_dir: Path,
                              nuclei_dir: Path,
@@ -42,7 +46,7 @@ def random_qc_visualization(spots_dir: Path,
     for spot_fp in samples:
         # assume the base name before "_spots.csv" matches nuclei CSV & mask
         base = spot_fp.stem.replace("_spots", "")
-        nuclei_fp = nuclei_dir / f"{base}.csv"
+        nuclei_fp = nuclei_dir / f"{base}_nuclei.csv"
         # assume mask files end in .tif
         mask_fp = next(mask_dir.glob(f"{base}*.tif"), None)
         if not nuclei_fp.exists() or mask_fp is None:
@@ -75,23 +79,32 @@ if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Batch processing
+    count_spots_dir = OUTPUT_DIR / "count_spots"
+    count_spots_dir.mkdir(parents=True, exist_ok=True)
+
+    # split_5d_tiff_to_timepoints(
+    #     input_path=INPUT_DIR,
+    #     output_dir=OUTPUT_DIR
+    # )
+
     combined_results = batch_process_images(
-        input_dir=INPUT_DIR,
-        output_dir=OUTPUT_DIR,
+        input_dir=OUTPUT_DIR / "raw_images_timelapse",
+        output_dir=count_spots_dir,
         nuclei_mask_dir=NUCLEI_MASK_DIR,
-        nuclei_csv_dir=NUCLEI_CSV_DIR,
+        nuclei_csv_dir=NUCLEI_CSV_DIR
     )
 
     # Final combine
     analyze_nuclei_and_spots(
         nuclei_dir=NUCLEI_CSV_DIR,
-        spots_dir=OUTPUT_DIR
+        spots_dir=count_spots_dir,
+        mask_dir=NUCLEI_MASK_DIR
     )
 
-        # after all analyses, do a quick 3‐sample QC:
+    #do a QC
     QC_OUTPUT = BASE_DIR / "qc_3d"
     random_qc_visualization(
-        spots_dir=OUTPUT_DIR,
+        spots_dir=count_spots_dir,
         nuclei_dir=NUCLEI_CSV_DIR,
         mask_dir=NUCLEI_MASK_DIR,
         qc_out=QC_OUTPUT,

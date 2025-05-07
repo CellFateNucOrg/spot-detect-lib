@@ -1,4 +1,7 @@
 import os
+import re
+import time
+import gc
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -9,11 +12,64 @@ from pathlib import Path
 from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from aicsimageio import AICSImage
 from spot_analysis import (
     detect_spots_MPHD,
     analyze_spots,
-    visualize_results
+    visualize_results,
+    load_nuclei_data,
+    count_spots_in_nuclei,
+    calculate_spatial_metrics,
+    visualize_distribution
 )
+import tifffile
+
+
+def split_5d_tiff_to_timepoints(input_path: Path, output_dir: Path) -> None:
+    """
+    Splits all 5D (T, C, Z, Y, X) TIFFs in a folder into OME-TIFFs per timepoint.
+    Outputs to output_dir/raw_images_timelapse/{basename}_t{tt}.ome.tif
+    """
+    from aicsimageio import AICSImage
+    import tifffile
+    import numpy as np
+    from pathlib import Path
+
+    input_dir = Path(input_path)
+    raw_root = Path(output_dir) / "raw_images_timelapse"
+    raw_root.mkdir(parents=True, exist_ok=True)
+
+    ext = {".tif", ".tiff"}
+
+    for img_path in sorted(input_dir.iterdir()):
+        if img_path.suffix.lower() not in ext or img_path.stem.endswith('_max'):
+            continue
+
+        base_name = img_path.stem
+
+        # lazy open
+        img = AICSImage(str(img_path))
+        assert img.dims.order == "TCZYX", f"Unexpected axes: {img.dims.order}"
+        n_time, n_chan, n_z, n_y, n_x = img.shape
+
+        for t in range(n_time):
+            # grab channels+Z for this timepoint as (C,Z,Y,X)
+            czyx = img.get_image_data("CZYX", T=t)
+
+            czyx_5d = czyx[np.newaxis, ...] # shape = (1, C, Z, Y, X)
+
+            # Write directly (no need to move axes now!)
+            out_path = raw_root / f"{base_name}_t{t:02d}.tif"
+            tifffile.imwrite(
+                str(out_path),
+                czyx_5d,
+                photometric="minisblack",
+                metadata={"axes": "TCZYX"},
+                ome=True,
+            )
+            print(f"Saved OME-TIFF: {out_path}")
+
+
 
 def process_single_image(image_path, nuclei_mask_path, nuclei_csv_path, output_dir, spot_channel=1):
     """Process a single image and save results"""
@@ -54,9 +110,8 @@ def process_single_image(image_path, nuclei_mask_path, nuclei_csv_path, output_d
     
     return spots_mapped, nuclei_analysis, img
 
-def batch_process_images(input_dir, output_dir, 
-                   nuclei_mask_dir, nuclei_csv_dir,
-                   nuclei_prefix='SDC1_e_', mask_time_suffix='_t00'):
+
+def batch_process_images(input_dir, output_dir, nuclei_mask_dir, nuclei_csv_dir, spot_channel=1):
     """Process all images in the input directory"""
 
     os.makedirs(output_dir, exist_ok=True)
@@ -70,25 +125,36 @@ def batch_process_images(input_dir, output_dir,
     ]
 
     for image_file in tqdm(image_files, desc="Processing images"):
+        
         image_path = os.path.join(input_dir, image_file)
-        base_name = os.path.splitext(image_file)[0]
-        
+        base_name = re.sub(r'n2v_', '', os.path.splitext(image_file)[0])
+
         # Construct nuclei filenames based on naming convention
-        nuclei_base = f"{nuclei_prefix}{base_name}"
-        mask_filename = f"{nuclei_base}{mask_time_suffix}.tif"
-        csv_filename = f"{nuclei_base}.csv"
+        nuclei_base = base_name
         
+        # Verify if segmentation mask file exists
+        mask_filename = f"{base_name}.tif"
         mask_path = os.path.join(nuclei_mask_dir, mask_filename)
+        mask_exists = os.path.isfile(mask_path) 
+
+        if not mask_exists:
+            print(f"Segmentation mask directory is empty or not found: {mask_path}")
+            continue
+        
+        # Verify if nuclei CSV file exists
+        csv_filename = f"{nuclei_base}.csv"
         csv_path = os.path.join(nuclei_csv_dir, csv_filename)
-        
-        mask_exists = os.path.exists(mask_path)
-        csv_exists = os.path.exists(csv_path)
-        
+        csv_exists = os.path.isfile(csv_path)
+        if not csv_exists:
+            print(f"Nuclei CSV file not found: {csv_path}")
+            continue
+
         # Detect spots
         try:
             spots_df, _, _, _ = detect_spots_MPHD(
                 image_path, 
-                nuclei_mask_path=mask_path if mask_exists else None
+                nuclei_mask_path=mask_path if mask_exists else None,
+                spot_channel=spot_channel
             )
         except Exception as e:
             print(f"Error processing {image_file}: {e}")
@@ -109,8 +175,9 @@ def batch_process_images(input_dir, output_dir,
             try:
                 nuclei_df = load_nuclei_data(csv_path)
                 spots_mapped, nuclei_metrics = analyze_spots(
-                    spots_df, csv_path, mask_path, plot=False
+                    spots_output, csv_path, mask_path, plot=True
                 )
+
                 
                 metrics_output = os.path.join(output_dir, f"{base_name}_nuclei_metrics.csv")
                 nuclei_metrics.to_csv(metrics_output, index=False)
@@ -130,31 +197,7 @@ def batch_process_images(input_dir, output_dir,
     summary_df.to_csv(os.path.join(output_dir, 'summary.csv'), index=False)
     return summary_df
 
-def analyze_spots(spots_df, nuclei_csv_path, mask_path, plot=True):
-    """Integrated analysis pipeline with optional plotting"""
-    nuclei_df = load_nuclei_data(nuclei_csv_path)
-    spots_mapped, nuclei_counts = count_spots_in_nuclei(spots_df, mask_path, nuclei_df)
-    
-    # Calculate aspect ratios and filter
-    nuclei_counts['xy_ratio'] = nuclei_counts.apply(
-        lambda r: min(r['bb_dimX'], r['bb_dimY']) / max(r['bb_dimX'], r['bb_dimY']), axis=1)
-    nuclei_counts['xz_ratio'] = nuclei_counts.apply(
-        lambda r: min(r['bb_dimX'], r['bb_dimZ']) / max(r['bb_dimX'], r['bb_dimZ']), axis=1)
-    nuclei_counts['yz_ratio'] = nuclei_counts.apply(
-        lambda r: min(r['bb_dimY'], r['bb_dimZ']) / max(r['bb_dimY'], r['bb_dimZ']), axis=1)
-    
-    filtered_nuclei = nuclei_counts[
-        (nuclei_counts['xy_ratio'] >= 0.5) &
-        (nuclei_counts['xz_ratio'] >= 0.2) &
-        (nuclei_counts['yz_ratio'] >= 0.2)
-    ].copy()
-    
-    nuclei_metrics = calculate_spatial_metrics(filtered_nuclei)
-    
-    if plot:
-        visualize_distribution(nuclei_metrics)
-    
-    return spots_mapped, nuclei_metrics
+
 
 def plot_summary_statistics(combined_nuclei, output_dir):
     """Create summary plots for all processed images and save to file"""

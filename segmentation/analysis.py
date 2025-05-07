@@ -74,6 +74,17 @@ class DistanceAnalyzer:
             df_rp["timepoint"] = t
             df_rp["id"] = position_id
 
+            df_rp.rename(
+                columns={
+                    "area": "volume",
+                    "centroid-0": "centroid_z",
+                    "centroid-1": "centroid_y",
+                    "centroid-2": "centroid_x",
+                    "MajorAxisLength": "major_axis_length"
+                },
+                inplace=True
+            )
+
             anisotropy = np.round(img5d.physical_pixel_sizes.Z / img5d.physical_pixel_sizes.X, 0)
 
             # compute distance‐intensity profiles
@@ -129,7 +140,7 @@ class DistanceAnalyzer:
                     prof_nuc.append(nuc3d[zc][ann].mean())
 
             rec = {
-                **{k: row[k] for k in ["label","area","centroid-0","centroid-1","centroid-2","MajorAxisLength","solidity","timepoint","id"]},
+                **{k: row[k] for k in ["label","volume","centroid_z","centroid_y","centroid_x","major_axis_length","solidity","timepoint","id"]},
                 "bb_dimZ": mask3d.shape[0],
                 "bb_dimY": mask3d.shape[1],
                 "bb_dimX": mask3d.shape[2],
