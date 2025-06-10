@@ -6,7 +6,7 @@ This repository focuses on spot detection in microscopic images with segmented n
 To get started, clone this Git repository. While scripts are optimized for GPU and multi-core processing on servers, you can also clone it to a local computer.
 
 ```bash
-git clone [https://github.com/CellFateNucOrg/spot-detect-lib.git](https://github.com/CellFateNucOrg/spot-detect-lib.git)
+git clone https://github.com/CellFateNucOrg/spot-detect-lib.git
 ```
 ---
 
