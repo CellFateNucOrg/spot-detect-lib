@@ -37,15 +37,18 @@ def convert_coordinates(df, pixel_sizes, mask_shape):
     return coord_df
 
 def assign_nuclei_labels(spots_df, mask):
-    """Vectorized label assignment using segmentation mask"""
+    """label assignment using segmentation mask"""
     spots_df['nucleus_label'] = mask[
         spots_df['z_idx'].values,
         spots_df['y_idx'].values,
-        spots_df['y_idx'].values  # This should be spots_df['y_idx'].values
+        spots_df['x_idx'].values 
     ]
     return spots_df
 
 def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
+    """Main function to analyze nuclei and spots
+    and generate summary statistics and visualizations."""
+
     results_dir = os.path.join(spots_dir, 'results')
     os.makedirs(results_dir, exist_ok=True)
     combined_df = pd.DataFrame()
@@ -53,21 +56,26 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
     nuclei_files = glob.glob(os.path.join(nuclei_dir, '*.csv'))
     
     for nuclei_path in nuclei_files:
-        # File matching logic
         filename = os.path.basename(nuclei_path)
         base_id = re.sub(r'\.csv$', '', filename)
         
         # Load corresponding mask
         mask_path = os.path.join(mask_dir, f"{base_id}.tif")
         if not os.path.exists(mask_path):
-            print(f"Mask not found: {mask_path}")
+            # Try alternative mask filename with _t00.tif
+            alt_mask_path = os.path.join(mask_dir, f"{base_id}_t00.tif")
+            if os.path.exists(alt_mask_path):
+                mask_path = alt_mask_path
+            else:
+                print(f"Mask not found: {mask_path}")
             continue
             
         # Load and process mask
         mask, pixel_sizes = load_and_process_mask(mask_path)
         
-        # Load nuclei data
+        # Load nuclei data (ensure timepoint is integer)
         nuclei_df = pd.read_csv(nuclei_path)
+        nuclei_df['timepoint'] = nuclei_df['timepoint'].astype(int)
         
         # Load spots data
         spot_pattern = os.path.join(spots_dir, f"{base_id}_spots.csv")
@@ -78,13 +86,9 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
             
         spots_df = pd.concat([pd.read_csv(f) for f in spot_files], ignore_index=True)
         
-        # Coordinate conversion
+        # Coordinate conversion and label assignment
         spots_conv = convert_coordinates(spots_df, pixel_sizes, mask.shape)
-        
-        # Assign nuclei labels using mask
         spots_labeled = assign_nuclei_labels(spots_conv, mask)
-        
-        # Filter out background (label 0)
         valid_spots = spots_labeled[spots_labeled['nucleus_label'] > 0]
         
         # Aggregate spot data
@@ -110,85 +114,70 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
             'max_intensity': 0
         })
         
-        # Add metadata
-        match = re.search(r'_t(\d{2})_', base_id)
-        if match:
-            category = match.group(1)  # the 2 numbers
-        else:
-            category = None
-
-        merged_df['category'] = category
         combined_df = pd.concat([combined_df, merged_df], ignore_index=True)
+
+    # timepoints sort
+    combined_df = combined_df.sort_values('timepoint')
+    combined_df['timepoint_str'] = combined_df['timepoint'].astype(str)  # For categorical plotting
 
     # Save and plot results
     combined_csv_path = os.path.join(results_dir, 'combined_nuclei_spots.csv')
     combined_df.to_csv(combined_csv_path, index=False)
-    # Plotting
+    
     plot_path = lambda name: os.path.join(results_dir, name)
 
-    plt.figure(figsize=(10, 6))
-    sns.boxplot(data=combined_df, x='category', y='spot_count')
-    plt.title('Spots per nucleus across categories')
-    plt.savefig(plot_path('boxplot_spots_per_nucleus.png'))
-    plt.close()
+    # Seaborn boxplot (numerical timepoints)
+    if not combined_df.empty and combined_df['spot_count'].notnull().any():
+        # Optional: filter timepoints that have at least some data
+        non_empty_df = combined_df.groupby('timepoint').filter(lambda g: len(g) > 0)
+        plt.figure(figsize=(10, 6))
+        sns.boxplot(data=non_empty_df, x='timepoint', y='spot_count')
+        plt.title('Spots per nucleus over timepoints')
+        plt.savefig(plot_path('boxplot_spots_over_time.png'))
+        plt.close()
+    else:
+        print("Warning: No data available for Seaborn boxplot — skipping plot.")
 
-    plt.figure(figsize=(10, 6))
-    sns.scatterplot(data=combined_df, x='volume', y='spot_count', hue='category')
-    plt.title('Nucleus volume vs spot count')
-    plt.savefig(plot_path('scatter_volume_vs_spotcount.png'))
-    plt.close()
+    # Plotly dashboard
+    fig1 = px.box(combined_df, x='timepoint_str', y='spot_count', 
+                 color='timepoint_str', points="all",
+                 title='Spots per nucleus over timepoints',
+                 category_orders={"timepoint_str": sorted(combined_df['timepoint_str'].unique(), key=int)})
 
-    plt.figure(figsize=(10, 6))
-    sns.barplot(data=combined_df, x='category', y='mean_intensity', estimator='mean')
-    plt.title('Average spot intensity per category')
-    plt.savefig(plot_path('barplot_mean_intensity.png'))
-    plt.close()
+    fig2 = px.scatter(combined_df, x='volume', y='spot_count', 
+                     color='timepoint_str',
+                     title='Nucleus volume vs spot count',
+                     opacity=0.6, size_max=10)
 
-    # Boxplot: add all traces
-    fig1 = px.box(combined_df, x='category', y='spot_count', color='category',
-                title='Spots per nucleus',
-                points="all", template='plotly_white')
+    fig3 = px.bar(combined_df, x='timepoint_str', y='mean_intensity',
+                 color='timepoint_str',
+                 title='Average spot intensity',
+                 category_orders={"timepoint_str": sorted(combined_df['timepoint_str'].unique(), key=int)})
 
-    # Scatter: fix overlapping with opacity + marker size
-    fig2 = px.scatter(combined_df, x='volume', y='spot_count', color='category',
-                    title='Nucleus volume vs spot count',
-                    hover_data=['label', 'mean_intensity'],
-                    opacity=0.6, size_max=10, template='plotly_white')
-
-    # Barplot: as before
-    fig3 = px.bar(combined_df, x='category', y='mean_intensity', color='category',
-                title='Average spot intensity per category',
-                barmode='group', template='plotly_white')
-
-    # Combine into a dashboard
+    # Create dashboard
     dashboard = make_subplots(
         rows=2, cols=2,
         subplot_titles=("Spots per nucleus", "Volume vs spot count", "Mean spot intensity"),
         specs=[[{"type": "box"}, {"type": "scatter"}],
-            [{"colspan": 2}, None]]
+               [{"colspan": 2}, None]]
     )
 
-    # Add ALL boxplot traces
     for trace in fig1['data']:
         dashboard.add_trace(trace, row=1, col=1)
-
-    # Add ALL scatterplot traces
+        
     for trace in fig2['data']:
         dashboard.add_trace(trace, row=1, col=2)
 
-    # Add ALL barplot traces
     for trace in fig3['data']:
         dashboard.add_trace(trace, row=2, col=1)
 
-    # Final layout tweaks
     dashboard.update_layout(
         height=850,
         width=1300,
-        title_text="Spots analysis Dashboard",
+        title_text="Timecourse Spots Analysis Dashboard",
         template='plotly_white',
-        showlegend=True
+        showlegend=False  # Optional: cleaner view if many timepoints
     )
 
-    # Save and show
-    dashboard.write_html(plot_path("interactive_dashboard.html"))
-    print(f"Dashboard saved to: {results_dir}")
+    dashboard.write_html(plot_path("timecourse_dashboard.html"))
+    print(f"Analysis saved to: {results_dir}")

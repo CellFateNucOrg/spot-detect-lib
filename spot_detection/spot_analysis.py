@@ -14,6 +14,7 @@ import seaborn as sns
 from pathlib import Path
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.ndimage import gaussian_filter
 
 def detect_spots_MPHD(image_path, spot_channel=1, 
                      sigma=1.3, h_percentile=85,  
@@ -53,8 +54,8 @@ def detect_spots_MPHD(image_path, spot_channel=1,
             raise ValueError("Nuclei mask shape does not match image shape.")
 
     # Gaussian smoothing with 3D kernel
-    smoothed = filters.gaussian(img, sigma=sigma)
-    
+    smoothed = gaussian_filter(img, sigma=sigma)
+
     # Calculate adaptive h value
     non_zero = smoothed[smoothed > 0]
     if len(non_zero) == 0:
@@ -64,7 +65,7 @@ def detect_spots_MPHD(image_path, spot_channel=1,
     
     # 3D h-dome transformation
     seed = np.clip(smoothed - h, 0, None)
-    footprint = morphology.ball(5)
+    footprint = np.ones((5, 5, 5), dtype=bool)
     reconstructed = morphology.reconstruction(
         seed=seed,
         mask=smoothed,
@@ -161,7 +162,6 @@ def load_nuclei_data(nuclei_csv_path):
     for col in array_cols:
         if col in df.columns:
             df[col] = df[col].apply(parse_array)
-
 
     return df
 
@@ -372,9 +372,9 @@ def analyze_spots(
             lambda r: min(r['bb_dimY'], r['bb_dimZ']) / max(r['bb_dimY'], r['bb_dimZ']), axis=1)
         
         filtered_nuclei = nuclei_counts[
-            (nuclei_counts['xy_ratio'] >= 0.5) &
-            (nuclei_counts['xz_ratio'] >= 0.2) &
-            (nuclei_counts['yz_ratio'] >= 0.2)
+            (nuclei_counts['xy_ratio'] >= 0.2) &
+            (nuclei_counts['xz_ratio'] >= 0.1) &
+            (nuclei_counts['yz_ratio'] >= 0.1)
         ].copy()
         
         nuclei_metrics = calculate_spatial_metrics(filtered_nuclei)
@@ -386,13 +386,11 @@ def analyze_spots(
             # Generate output filenames
             base_name = os.path.splitext(os.path.basename(spots_csv_path))[0]
             spots_output = os.path.join(output_dir, f"{base_name}_mapped_spots.csv")
-            metrics_output = os.path.join(output_dir, f"{base_name}_nuclei_metrics.csv")
-            
+
             # Save results
             spots_mapped.to_csv(spots_output, index=False)
-            nuclei_metrics.to_csv(metrics_output, index=False)
-            
-            # Generate and save plots if requested
+
+            # Generate and save plots if 
             if plot:
                 plot_output = os.path.join(output_dir, f"{base_name}_distribution.png")
                 visualize_distribution(nuclei_metrics)

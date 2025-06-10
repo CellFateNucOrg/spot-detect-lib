@@ -4,11 +4,11 @@ import sys
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
-from batch_spot_analysis import batch_process_images, plot_summary_statistics, split_5d_tiff_to_timepoints
+from batch_spot_analysis import batch_process_images, split_5d_tiff_to_timepoints
 
 from post_processing import analyze_nuclei_and_spots
 import random
-from visualization import render_nuclei_3d
+from visualization import batch_qc_visualization, batch_render_spots_z_slider
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -21,45 +21,6 @@ def parse_args():
     p.add_argument("--output-dir",      type=Path, required=True)
     return p.parse_args()
 
-
-
-
-def random_qc_visualization(spots_dir: Path,
-                             nuclei_dir: Path,
-                             mask_dir: Path,
-                             qc_out: Path,
-                             n_samples: int = 3):
-    """
-    Pick n_samples random spot CSVs from spots_dir, find the matching
-    nuclei CSV and mask TIFF in nuclei_dir and mask_dir, and render each.
-    """
-    # collect all spot files
-    spot_files = list(spots_dir.glob("*_spots.csv"))
-    if not spot_files:
-        print("No spot CSV files found for QC.")
-        return
-
-    # sample up to n_samples
-    samples = random.sample(spot_files, min(n_samples, len(spot_files)))
-    qc_out.mkdir(parents=True, exist_ok=True)
-
-    for spot_fp in samples:
-        # assume the base name before "_spots.csv" matches nuclei CSV & mask
-        base = spot_fp.stem.replace("_spots", "")
-        nuclei_fp = nuclei_dir / f"{base}_nuclei.csv"
-        # assume mask files end in .tif
-        mask_fp = next(mask_dir.glob(f"{base}*.tif"), None)
-        if not nuclei_fp.exists() or mask_fp is None:
-            print(f"Skipping QC for {base}: missing CSV or mask")
-            continue
-
-        out_subdir = qc_out / base
-        render_nuclei_3d(
-            spots_path=str(spot_fp),
-            mask_path=str(mask_fp),
-            csv_path=str(nuclei_fp),
-            output_path=str(out_subdir)
-        )
 
 
 if __name__ == "__main__":
@@ -89,6 +50,7 @@ if __name__ == "__main__":
 
     combined_results = batch_process_images(
         input_dir=OUTPUT_DIR / "raw_images_timelapse",
+        #input_dir=INPUT_DIR ,
         output_dir=count_spots_dir,
         nuclei_mask_dir=NUCLEI_MASK_DIR,
         nuclei_csv_dir=NUCLEI_CSV_DIR
@@ -101,14 +63,29 @@ if __name__ == "__main__":
         mask_dir=NUCLEI_MASK_DIR
     )
 
-    #do a QC
+    # # #do a QC
     QC_OUTPUT = BASE_DIR / "qc_3d"
-    random_qc_visualization(
+    QC_OUTPUT.mkdir(parents=True, exist_ok=True)
+
+    batch_render_spots_z_slider(
         spots_dir=count_spots_dir,
-        nuclei_dir=NUCLEI_CSV_DIR,
         mask_dir=NUCLEI_MASK_DIR,
+        raw_img_dir=OUTPUT_DIR / "raw_images_timelapse",
+        #raw_img_dir=INPUT_DIR,
         qc_out=QC_OUTPUT,
-        n_samples=3
+        n_samples=5,
+        z_range=(15, 25),
     )
     print(f"QC 3D renders saved to {QC_OUTPUT}")
 
+
+    # batch_qc_visualization(
+    #     spots_dir=count_spots_dir,
+    #     nuclei_dir=NUCLEI_CSV_DIR,
+    #     mask_dir=NUCLEI_MASK_DIR,
+    #     raw_img_dir=OUTPUT_DIR / "raw_images_timelapse",
+    #     #raw_img_dir=INPUT_DIR,
+    #     qc_out=QC_OUTPUT,
+    #     n_samples=15,
+    #     z_range=(15, 35)
+    # )
