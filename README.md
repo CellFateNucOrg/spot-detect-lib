@@ -17,7 +17,7 @@ The segmentation process leverages previous scripts, utilizing CellPose and a pr
 **To run a segmentation:**
 
 1.  Open the `nuclei_segmentation.sh` script on your cluster.
-2.  **Crucially, change the folder locations** to point to your image files.
+2.  **Crucially, change the folder locations** to folders to your image files.
 
 This script supports **.nd2** and **.tif** image files. While **.czi** format was under development, it's currently recommended to convert **.czi** files to **.tif** before processing.
 
@@ -40,23 +40,23 @@ python -m segmentation.cli segment \
 Here's a breakdown of the available flags for the segmentation process:
 
 * **`--raw-dir`** (required)
-    * **Description:** Specifies the folder containing your input image files (**.nd2**, **.czi**, or **.tif**).
+    *  Specifies the folder containing your input image files (**.nd2**, **.czi**, or **.tif**).
 * **`--denoised-dir`** (optional)
-    * **Description:** Specifies the folder containing denoised **.tif** files, if available.
+    *  Specifies the folder containing denoised **.tif** files, if available.
 * **`--pattern`** (default: `*.nd2`)
-    * **Description:** A glob pattern to filter raw images (e.g., `'*.nd2'`, `'*.czi'`, `'*.tif'`).
+    *  A glob pattern to filter raw images (e.g., `'*.nd2'`, `'*.czi'`, `'*.tif'`).
 * **`--model`** (required)
-    * **Description:** Path to the Cellpose model folder.
+    *  Path to the Cellpose model folder.
 * **`--out-root`** (required)
-    * **Description:** The root directory where all output files will be saved.
+    *  The root directory where all output files will be saved.
 * **`--gpu` / `--cpu`** (default: `--gpu`)
-    * **Description:** Toggles between using **GPU** acceleration or **CPU** for processing.
+    *  Toggles between using **GPU** acceleration or **CPU** for processing.
 * **`--do-qc` / `--no-qc`** (default: `--no-qc`)
-    * **Description:** Enables or disables saving Quality Control (**QC**) images of the segmentation results.
+    *  Enables or disables saving Quality Control (**QC**) images of the segmentation results.
 * **`--invert` / `--no-invert`** (default: `--no-invert`)
-    * **Description:** Controls whether image intensities are inverted before segmentation.
+    *  Controls whether image intensities are inverted before segmentation.
 * **`--blur-sigma`** (optional)
-    * **Description:** Applies an optional Gaussian blur with a specified sigma value before segmentation.
+    *  Applies an optional Gaussian blur with a specified sigma value before segmentation.
 
 **Upcoming Feature:** I will implement a possibility to change the nuclei diameter. For high-resolution images, I manually changed the `diameter: float = 125` parameter in `segment.py` (for confocal images, it was `None` as the model performed well with autodetection).
 
