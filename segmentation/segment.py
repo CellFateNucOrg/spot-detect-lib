@@ -13,6 +13,7 @@ from torch.serialization import DEFAULT_PROTOCOL
 import torch
 from .utils import timeit
 from .logger import logger
+from skimage.filters import gaussian 
 
 
 class Segmenter:
@@ -25,10 +26,12 @@ class Segmenter:
         self,
         model_path: Path,
         gpu: bool = True,
-        diameter: float = None,
+        diameter: float = 125, #None,
         nuc_channel: int = 0,
         stitch_threshold: float = 0.3,
-        cellprob_threshold: float = 0.0
+        cellprob_threshold: float = 0.0,
+        invert: bool = False,
+        blur_sigma: float = None
     ):
         """
         model_path: path to a pretrained Cellpose model
@@ -36,6 +39,7 @@ class Segmenter:
         diameter: expected nucleus diameter (pixels)
         nuc_channel: channel index for nuclei
         stitch_threshold, cellprob_threshold: Cellpose params
+        blur_sigma: standard deviation for gaussian blur, if provided
         """
         self.model = models.CellposeModel(
             pretrained_model=str(model_path),
@@ -45,6 +49,8 @@ class Segmenter:
         self.nuc_channel = nuc_channel
         self.stitch_threshold = stitch_threshold
         self.cellprob_threshold = cellprob_threshold
+        self.invert = invert
+        self.blur_sigma = blur_sigma  # <-- store blur sigma
 
     def segment_image(self, volume: np.ndarray) -> np.ndarray:
         """
@@ -52,6 +58,8 @@ class Segmenter:
         Returns a 3D mask (Z, Y, X).
         """
         volume = exposure.rescale_intensity(volume.astype(np.float32), out_range=(0, 1))
+        if self.blur_sigma is not None:
+            volume = gaussian(volume, sigma=self.blur_sigma, preserve_range=True)
         masks, flows, styles = self.model.eval(
             volume,
             diameter=self.diameter,
@@ -60,7 +68,8 @@ class Segmenter:
             z_axis=0,          # Explicitly define z-axis (dim 0 for ZYXC data)
             channel_axis=-1,   # Channels last (ZYXC)
             stitch_threshold=self.stitch_threshold,
-            cellprob_threshold=self.cellprob_threshold
+            cellprob_threshold=self.cellprob_threshold,
+            invert=self.invert
         )
         # flows & styles can be GC’d once masks saved
         del flows, styles
@@ -104,6 +113,7 @@ class Segmenter:
             for t in range(img5d.dims.T):
                 logger.info(f"{t:02d}: loading volume and running Cellpose")
                 vol = img5d.get_image_data("CZYX", T=t)
+                #print(pos_id, "vol shape:", nuc_vol.shape)  # should be (1, Z, Y, X) with all dims >0
                 nuc_vol = vol[self.nuc_channel : self.nuc_channel + 1]
 
                 masks = self.segment_image(nuc_vol)

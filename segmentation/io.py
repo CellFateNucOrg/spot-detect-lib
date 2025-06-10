@@ -86,12 +86,20 @@ class TabularIO:
             return pickle.load(f)
 
 
-def get_anisotropy(nd2_path: Path) -> tuple:
+def get_anisotropy(image_path: Path) -> tuple:
     """
-    Extract Z/X pixel size ratio from an ND2 file.
+    Extract Z/X pixel size ratio from an ND2 or TIFF file.
     Returns (Zratio, 1, 1) for edt anisotropy.
     """
-    img = ImageIO.read_nd2(nd2_path)
-    px = img.physical_pixel_sizes  # in µm
-    z_ratio = px.Z / px.X
+    if image_path.suffix.lower() == ".nd2":
+        img = ImageIO.read_nd2(image_path)
+        px = img.physical_pixel_sizes  # in µm
+        z_ratio = px.Z / px.X
+    elif image_path.suffix.lower() in {".tif", ".tiff"}:
+        #img = ImageIO.read_tiff(image_path)
+        # Assuming isotropic pixel size for TIFF as metadata may not be available
+        z_ratio = 1.0
+    else:
+        raise ValueError(f"Unsupported file format: {image_path.suffix}")
+    
     return (z_ratio, 1.0, 1.0)

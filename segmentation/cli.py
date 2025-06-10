@@ -20,9 +20,10 @@ def cli():
 @click.option('--out-root',     required=True,  type=Path, help="Root output folder")
 @click.option('--gpu/--cpu',    default=True,      help="Toggle GPU acceleration")
 @click.option('--do-qc/--no-qc', default=False,    help="Save segmentation QC images")
+@click.option('--invert/--no-invert', default=False, help="Invert image intensities before segmentation")
+@click.option('--blur-sigma',   default=None,   type=float, help="Optional gaussian blur sigma before segmentation")
 
-
-def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc):
+def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc, invert, blur_sigma):
     """
     1. Build file index (raw + optional denoised)  
     2. Run Cellpose segmentation + EDT  
@@ -35,7 +36,7 @@ def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc):
 
     from .segment import Segmenter
     # 2. segment + edt
-    seg = Segmenter(model_path=model, gpu=gpu)
+    seg = Segmenter(model_path=model, gpu=gpu, invert=invert, blur_sigma=blur_sigma)
     seg.run_on_directory(
         file_index=df,
         out_seg_dir=out_root/"segmentation",
@@ -75,18 +76,18 @@ def analyze(raw_dir, seg_dir, out_root, spot_ch, nuc_ch):
     # run per‐position
     logger.info("Starting full distance analysis")
     for p in raw_dir.glob("*"):
-        if p.suffix.lower() in (".nd2", ".czi", ".tif") and not p.stem.endswith("_max"):
+        if p.suffix.lower() in (".nd2", ".tif") and not p.stem.endswith("_max"):
             logger.info(f"Submitting analysis for {p.stem}")
             da.run_for_position(p.stem)
 
     # aggregate
     logger.info("Collecting per-position CSVs into one summary")
     da.collect_all_nuclei_csv(
-        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".czi", ".tif") and not p.stem.endswith("_max")]
+        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".tif") and not p.stem.endswith("_max")]
     )
     logger.info("Collecting all distance profiles into one pickle")
     da.collect_all_dist_profiles(
-        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".czi", ".tif") and not p.stem.endswith("_max")]
+        df_index=[p.stem for p in raw_dir.glob("*") if p.suffix.lower() in (".nd2", ".tif") and not p.stem.endswith("_max")]
     )
     logger.info("Distance analysis complete")
 

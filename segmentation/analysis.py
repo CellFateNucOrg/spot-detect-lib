@@ -12,6 +12,7 @@ import bioio_nd2
 import bioio_tifffile
 from .utils import timeit
 from .logger import logger
+import matplotlib.pyplot as plt
 
 
 class DistanceAnalyzer:
@@ -40,36 +41,76 @@ class DistanceAnalyzer:
     @timeit
     def run_for_position(self, position_id: str) -> None:
         """
-        - Load raw ND2 (or TIFF) per‐timepoint.
+        - Load raw ND2 or TIFF per‐timepoint.
         - Load corresponding segmentation masks.
         - Compute per‐nucleus, per‐distance mean intensities.
         - Save a pickle of the full DataFrame and a CSV for easy viewing.
         """
         df_nuc = []
-        raw_path = self.raw_dir / f"{position_id}.nd2"
-        img5d = BioImage(raw_path, reader=bioio_nd2.Reader)
-
+        raw_path_nd2 = self.raw_dir / f"{position_id}.nd2"
+        raw_path_tif = self.raw_dir / f"{position_id}.tif"
+        
+        # Determine which raw file exists and load accordingly
+        if raw_path_nd2.exists():
+            img5d = BioImage(raw_path_nd2, reader=bioio_nd2.Reader)
+        elif raw_path_tif.exists():
+            img5d = BioImage(raw_path_tif, reader=bioio_tifffile.Reader)
+        else:
+            raise FileNotFoundError(f"No raw ND2 or TIFF file found for position {position_id} in {self.raw_dir}")
 
         for t in range(img5d.dims.T):
             logger.info(f"    t={t:02d}: computing regionprops")
             img = img5d.get_image_data("ZYXC", T=t)
+            mask_path = self.seg_dir / f"{position_id}_t{t:02d}.tif"
+            
+            if not mask_path.exists():
+                logger.warning(f"Mask not found for t={t:02d}, skipping...")
+                continue
+
             mask = BioImage(
-                self.seg_dir / f"{position_id}_t{t:02d}.tif",
+                mask_path,
                 reader=bioio_tifffile.Reader
             ).get_image_data("ZYX", T=0, C=0)
+
+            if mask is None:
+                logger.warning(f"No mask found for t={t:02d} in {position_id}")
+                continue
+            if not mask.any():
+                logger.warning(f"Mask is empty (all zeros) for t={t:02d} in {position_id}")
+                continue
+
+            # DEBUG: Save overlay of mask + raw for inspection
+            debug_dir = Path("/mnt/external.data/MeisterLab/mvolosko/image_project/spot-detect-lib/scripts/debug_plots")
+            debug_dir.mkdir(exist_ok=True)
+
+            fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+            # Middle Z-slice for both
+            img_zc = img[mask.shape[0] // 2, ..., self.nuc_ch]
+            mask_zc = mask[mask.shape[0] // 2, ...]
+            ax[0].imshow(img_zc, cmap='gray')
+            ax[0].set_title(f"Raw Nucleus Channel t={t}")
+            ax[1].imshow(mask_zc, cmap='gray')
+            ax[1].set_title(f"Mask t={t}")
+            plt.suptitle(f"{position_id}_t{t:02d}")
+            plt.tight_layout()
+            plt.savefig(debug_dir / f"{position_id}_t{t:02d}_debug.png")
+            plt.close()
 
             rp = regionprops_table(
                 mask,
                 intensity_image=img,
                 properties=[
-                    "label","area","centroid",
-                    "MajorAxisLength","solidity",
-                    "image","intensity_image"
+                    "label", "area", "centroid",
+                    "MajorAxisLength", "solidity",
+                    "image", "intensity_image"
                 ]
             )
             df_rp = pd.DataFrame(rp)
+
             if df_rp.empty:
+                logger.warning(f"Regionprops empty for t={t:02d} in position {position_id}, skipping...")
                 continue
+
 
             df_rp["timepoint"] = t
             df_rp["id"] = position_id
@@ -85,7 +126,11 @@ class DistanceAnalyzer:
                 inplace=True
             )
 
-            anisotropy = np.round(img5d.physical_pixel_sizes.Z / img5d.physical_pixel_sizes.X, 0)
+            anisotropy = (
+                np.round(img5d.physical_pixel_sizes.Z / img5d.physical_pixel_sizes.X, 0)
+                if img5d.physical_pixel_sizes.Z and img5d.physical_pixel_sizes.X
+                else 1
+            )
 
             # compute distance‐intensity profiles
             profiles = self._compute_profiles(df_rp, anisotropy)
@@ -93,21 +138,23 @@ class DistanceAnalyzer:
             
 
         if not df_nuc:
+            logger.warning(f"No valid regionprops found for any timepoints in position {position_id}. No output CSV generated.")
             return
+
 
         df_all = pd.concat(df_nuc, ignore_index=True)
         # full pickle for downstream plotting/fit
         df_all.to_pickle(self.out_dist / f"{position_id}.pkl")
         # lean CSV without arrays
         df_csv = df_all.drop(
-            columns=["intensity_profile_spots","intensity_profile_nuc"]
+            columns=["intensity_profile_spots", "intensity_profile_nuc"]
         )
         df_csv.to_csv(self.out_nuc / f"{position_id}.csv", index=False)
-        # After writing the per‐position CSV, split out per‐timepoint tables
+        # Split per‐timepoint tables
         for t, df_t in df_csv.groupby("timepoint"):
-            # e.g. nuclei/pos1_t00.csv, nuclei/pos1_t01.csv, …
             df_t.to_csv(self.out_nuc / f"{position_id}_t{t:02d}.csv", index=False)
         logger.info(f"✅ Completed analysis for {position_id}")
+
         
     def _compute_profiles(self, df_rp: pd.DataFrame, anisotropy: float) -> pd.DataFrame:
         """
@@ -160,9 +207,14 @@ class DistanceAnalyzer:
             path = self.out_nuc / f"{pos}.csv"
             if path.exists():
                 dfs.append(pd.read_csv(path))
+            else:
+                logger.warning(f"Missing CSV for position {pos} — skipping.")
+        if not dfs:
+            raise ValueError("No CSV files found to concatenate. Check if analysis ran correctly.")
         combined = pd.concat(dfs, ignore_index=True)
         combined.to_csv(self.out_nuc.parent / "nuclei_analysis.csv", index=False)
         return combined
+
 
     def collect_all_dist_profiles(self, df_index: pd.Index) -> pd.DataFrame:
         """
