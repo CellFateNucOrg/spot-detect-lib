@@ -120,9 +120,6 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
     combined_df = combined_df.sort_values('timepoint')
     combined_df['timepoint_str'] = combined_df['timepoint'].astype(str)  # For categorical plotting
 
-    # Save and plot results
-    combined_csv_path = os.path.join(results_dir, 'combined_nuclei_spots.csv')
-    combined_df.to_csv(combined_csv_path, index=False)
     
     plot_path = lambda name: os.path.join(results_dir, name)
 

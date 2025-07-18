@@ -72,9 +72,10 @@ if __name__ == "__main__":
         mask_dir=NUCLEI_MASK_DIR,
         raw_img_dir=OUTPUT_DIR / "raw_images_timelapse",
         #raw_img_dir=INPUT_DIR,
+        domains_path= None,
         qc_out=QC_OUTPUT,
         n_samples=5,
-        z_range=(15, 25),
+        z_range=(10, 30),
     )
     print(f"QC 3D renders saved to {QC_OUTPUT}")
 

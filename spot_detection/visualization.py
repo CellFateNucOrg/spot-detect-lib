@@ -249,303 +249,215 @@ cmap = cm.get_cmap("plasma")  # vibrant colormap for spot contours
 def distance_color(d):
     return to_hex(cmap(norm(d)))
 
+
 def render_spots_z_slider(
     spots_path: str,
     original_img_path: str,
     mask_path: str,
+    domains_path: str = None,
     z_range: tuple = None,
     output_path: str = ".",
     base_id: str = None
 ):
     """
-    2D z-slice explorer with spots overlay (including neighboring z-slices), nuclei outlines, and slider.
+    Generates a 2D z-slice explorer with spots, domains, and nuclei outlines.
+
+    This function creates an interactive HTML file with a slider to navigate through
+    z-slices, overlaying spots and domains from neighboring slices. It also saves
+    static maximum projection and middle-slice images.
+
+    Parameters:
+    - spots_path: Path to the spot coordinates CSV file.
+    - original_img_path: Path to the raw 3D image.
+    - mask_path: Path to the 3D nuclei/shape mask.
+    - domains_path: (Optional) Path to the domain coordinates CSV file.
+    - z_range: (Optional) A tuple (start, end) to crop the Z-axis.
+    - output_path: Directory to save the HTML and PNG outputs.
+    - base_id: A unique identifier for the output files.
     """
-    # --- Load spots and snap z to integer slices ------------------
+    print(f"--- Rendering visualization for {base_id} ---")
+    # --- Load Data ---
     spots_df = pd.read_csv(spots_path)
     spots_df['centroid_z'] = spots_df['centroid_z'].round().astype(int)
 
-    # --- Load raw image and mask stacks ---------------------------
     raw = AICSImage(original_img_path).get_image_data("ZYX", T=0, C=1)
     raw = np.squeeze(raw).astype(np.float32)
     mask = AICSImage(mask_path).get_image_data("ZYX", T=0, C=0)
     mask = np.squeeze(mask).astype(np.uint8)
 
-    # --- Optional z‐range cropping -------------------------------
+    # --- Load Domain Data (if provided) ---
+    domains_df = None
+    if domains_path and Path(domains_path).exists():
+        try:
+            domains_df = pd.read_csv(domains_path)
+            if not domains_df.empty:
+                domains_df['domain_centroid_z'] = domains_df['domain_centroid_z'].round().astype(int)
+                print(f"Loaded {len(domains_df)} domains.")
+            else:
+                domains_df = None # Treat empty file as no domains
+        except Exception as e:
+            print(f"Could not load or process domains file {domains_path}: {e}")
+            domains_df = None
+
+    # --- Optional z‐range cropping ---
     if z_range is not None:
         z0, z1 = z_range
         raw = raw[z0:z1]
         mask = mask[z0:z1]
-        spots_df = (
-            spots_df
-            .query("@z0 <= centroid_z < @z1")
-            .assign(centroid_z=lambda df: df.centroid_z - z0)
-        )
+        spots_df = spots_df.query("@z0 <= centroid_z < @z1").assign(centroid_z=lambda df: df.centroid_z - z0)
+        if domains_df is not None:
+            domains_df = domains_df.query("@z0 <= domain_centroid_z < @z1").assign(domain_centroid_z=lambda df: df.domain_centroid_z - z0)
 
     nz, ny, nx = raw.shape
 
+    # --- Helper functions for plotting ---
     def contour_trace(z):
         contours = find_contours(mask[z] > 0, 0.5)
         x_all, y_all = [], []
         for c in contours:
             x_all.extend(c[:, 1].tolist() + [None])
             y_all.extend(c[:, 0].tolist() + [None])
-        return go.Scatter(
-            x=x_all, y=y_all,
-            mode="lines",
-            line=dict(color="deepskyblue", width=2),  # more vibrant color for outlines
-            name="Nuclei outlines",
-            showlegend=False
-        )
+        return go.Scatter(x=x_all, y=y_all, mode="lines", line=dict(color="deepskyblue", width=1.5), name="Nuclei outlines", showlegend=False)
 
-    def spot_scatter(z, z_max=5):
+    def create_point_traces(z, z_neighbor_range=5):
         traces = []
-        for dz in range(-z_max, z_max + 1):
+        # Plot spots
+        for dz in range(-z_neighbor_range, z_neighbor_range + 1):
             current_z = z + dz
             if 0 <= current_z < nz:
                 sp = spots_df[spots_df.centroid_z == current_z]
-                if sp.empty:
-                    continue
-                opacity = max(0.1, 1 - abs(dz) / (z_max + 1))
-                color = f"rgba(255,0,0,{opacity:.2f})"
+                if sp.empty: continue
+                is_current_slice = (dz == 0)
+                opacity = 1.0 if is_current_slice else max(0.1, 1 - abs(dz) / (z_neighbor_range + 1))
+                color = f"rgba(255, 0, 0, {opacity:.2f})"
                 traces.append(go.Scatter(
-                    x=sp.centroid_x,
-                    y=sp.centroid_y,
-                    mode="markers",
-                    marker=dict(size=8, color=color, symbol="circle-open", line=dict(width=2)),
-                    name=f"z={current_z}" if dz != 0 else "z=current",
-                    showlegend=(dz == 0)
+                    x=sp.centroid_x, y=sp.centroid_y, mode="markers",
+                    marker=dict(size=8, color=color, symbol="circle-open", line=dict(width=2 if is_current_slice else 1)),
+                    name=f"Spots (z={current_z})" if not is_current_slice else "Spots (current z)",
+                    showlegend=is_current_slice
                 ))
+        # Plot domains
+        if domains_df is not None:
+            for dz in range(-z_neighbor_range, z_neighbor_range + 1):
+                current_z = z + dz
+                if 0 <= current_z < nz:
+                    dom = domains_df[domains_df.domain_centroid_z == current_z]
+                    if dom.empty: continue
+                    is_current_slice = (dz == 0)
+                    opacity = 1.0 if is_current_slice else max(0.1, 1 - abs(dz) / (z_neighbor_range + 1))
+                    color = f"rgba(0, 255, 255, {opacity:.2f})"  # Cyan for domains
+                    traces.append(go.Scatter(
+                        x=dom.domain_centroid_x, y=dom.domain_centroid_y, mode="markers",
+                        marker=dict(size=10, color=color, symbol="diamond", line=dict(width=2 if is_current_slice else 1)),
+                        name=f"Domains (z={current_z})" if not is_current_slice else "Domains (current z)",
+                        showlegend=is_current_slice
+                    ))
         return traces
 
-    # --- Initial traces ------------------------------------------
-    init_heatmap = go.Heatmap(z=raw[0], colorscale="gray")  # greyscale for raw image
-    init_outlines = contour_trace(0)
-    init_spots = spot_scatter(0)
+    # --- Build figure frames ---
+    frames = [go.Frame(data=[go.Heatmap(z=raw[z], colorscale="gray"), contour_trace(z)] + create_point_traces(z), name=str(z)) for z in range(nz)]
+    slider_steps = [dict(method="animate", args=([str(z)], dict(mode="immediate", frame=dict(duration=0), transition=dict(duration=0))), label=str(z)) for z in range(nz)]
 
-    # --- Build frames --------------------------------------------
-    frames = []
-    legend_shown = set()
-
-    for z in range(nz):
-        z_data = [go.Heatmap(z=raw[z], colorscale="gray"),
-                contour_trace(z)]
-        
-        # Plot current z slice spots
-        sp_current = spots_df[spots_df.centroid_z == z]
-        z_data.append(go.Scatter(
-            x=sp_current.centroid_x,
-            y=sp_current.centroid_y,
-            mode="markers",
-            marker=dict(size=6, color="red", opacity=0.9),
-            name="Z = current",
-            showlegend=(z == 0)
-        ))
-        
-        # Plot surrounding ±5 slices with different color/intensity
-        for d in range(1, 6):
-            for direction in [-1, 1]:
-                zd = z + direction * d
-                if not (0 <= zd < nz):
-                    continue
-                spz = spots_df[spots_df.centroid_z == zd]
-                color = distance_color(d)
-                label = f"Z {'+' if direction > 0 else '-'}{d}"
-                key = f"{direction}{d}"
-                z_data.append(go.Scatter(
-                    x=spz.centroid_x,
-                    y=spz.centroid_y,
-                    mode="markers",
-                    marker=dict(
-                        size=6,
-                        color=color,
-                        symbol="circle-open",
-                        opacity=max(0.2, 0.9 - d * 0.15),
-                        line=dict(width=1)
-                    ),
-                    name=label,
-                    showlegend=(key not in legend_shown)
-                ))
-                legend_shown.add(key)
-
-        frames.append(go.Frame(data=z_data, name=str(z)))
-
-    # --- Slider steps --------------------------------------------
-    slider_steps = [
-        dict(
-            method="animate",
-            args=(
-                [str(z)],
-                dict(mode="immediate", frame=dict(duration=0), transition=dict(duration=0))
-            ),
-            label=str(z)
-        )
-        for z in range(nz)
-    ]
-
-    # --- Assemble figure -----------------------------------------
-    fig = go.Figure(data=[init_heatmap, init_outlines] + init_spots, frames=frames)
-    
+    # --- Assemble figure ---
+    fig = go.Figure(data=[go.Heatmap(z=raw[0], colorscale="gray"), contour_trace(0)] + create_point_traces(0), frames=frames)
     fig.update_layout(
-        title=f"Spots & nuclei outlines {base_id or ''}".strip(),
-        xaxis=dict(title="X", autorange="reversed"),
-        yaxis=dict(title="Y", scaleanchor="x"),
-        width=900,
-        height=900,
-        margin=dict(t=60, b=40, l=40, r=40),
+        title=f"Spots, Domains & Nuclei Outlines: {base_id or ''}".strip(),
+        xaxis=dict(title="X", autorange="reversed"), yaxis=dict(title="Y", scaleanchor="x"),
+        width=900, height=900, legend=dict(x=1.05, y=1),
         sliders=[dict(active=0, pad={"t": 50}, steps=slider_steps)],
-        updatemenus=[dict(
-            type="buttons",
-            showactive=False,
-            y=1,
-            x=1.15,
-            xanchor="right",
-            yanchor="top",
-            buttons=[
-                dict(label="Play", method="animate",
-                    args=[None, {"frame": {"duration": 200}, "fromcurrent": True}]),
-                dict(label="Pause", method="animate",
-                    args=[[None], {"frame": {"duration": 0}, "mode": "immediate"}])
-            ]
-        )]
+        updatemenus=[dict(type="buttons", showactive=False, y=1, x=1.15, xanchor="right", yanchor="top", buttons=[
+            dict(label="Play", method="animate", args=[None, {"frame": {"duration": 200}, "fromcurrent": True}]),
+            dict(label="Pause", method="animate", args=[[None], {"frame": {"duration": 0}, "mode": "immediate"}])])]
     )
 
-    # --- Save HTML output ----------------------------------------
+    # --- Save HTML output ---
     out_dir = Path(output_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fname = f"{base_id or 'spots'}_z_dadads.html"
-    fig.write_html(out_dir / fname, include_plotlyjs="cdn", full_html=True)
+    fig.write_html(out_dir / f"{base_id or 'spots'}_z_slider.html", include_plotlyjs="cdn", full_html=True)
 
-    # Save static plots as PNG at higher resolution
+    # --- Save Static PNGs ---
     # Maximum projection
-    max_proj = np.max(raw, axis=0)
-    static_fig = go.Figure()
-    static_fig.add_trace(go.Heatmap(z=max_proj, colorscale="gray"))
-
-    # Create merged outlines from all z-slices
+    max_proj_fig = go.Figure(go.Heatmap(z=np.max(raw, axis=0), colorscale="gray"))
     all_contours_x, all_contours_y = [], []
-    for z in range(raw.shape[0]):
-        contours = find_contours(mask[z] > 0, 0.5)
+    for z_idx in range(raw.shape[0]):
+        contours = find_contours(mask[z_idx] > 0, 0.5)
         for c in contours:
             all_contours_x.extend(c[:, 1].tolist() + [None])
             all_contours_y.extend(c[:, 0].tolist() + [None])
-    
-    static_fig.add_trace(go.Scatter(
-        x=all_contours_x,
-        y=all_contours_y,
-        mode="lines",
-        line=dict(color="deepskyblue", width=1),
-        name="Nuclei outlines",
-        opacity=0.5
-    ))
-    static_fig.add_trace(go.Scatter(
-        x=spots_df.centroid_x, 
-        y=spots_df.centroid_y,
-        mode="markers",
-        marker=dict(size=2, color="red", opacity=0.6),
-        name="All spots"
-    ))
-    static_fig.update_layout(
-        title="Maximum Projection",
-        xaxis=dict(title="X", autorange="reversed"),
-        yaxis=dict(title="Y", scaleanchor="x"),
-        width=2400, height=2400,  # Increased size
-        plot_bgcolor='white'
-    )
-    static_fig.write_image(
-        out_dir / f"{base_id or 'spots'}_max_proj.png",
-        scale=4  # Increased resolution scale
-    )
+    max_proj_fig.add_trace(go.Scatter(x=all_contours_x, y=all_contours_y, mode="lines", line=dict(color="deepskyblue", width=1), name="Nuclei outlines", opacity=0.5))
+    max_proj_fig.add_trace(go.Scatter(x=spots_df.centroid_x, y=spots_df.centroid_y, mode="markers", marker=dict(size=2, color="red", opacity=0.6), name="All spots"))
+    if domains_df is not None:
+        max_proj_fig.add_trace(go.Scatter(x=domains_df.domain_centroid_x, y=domains_df.domain_centroid_y, mode="markers", marker=dict(size=4, color="cyan", opacity=0.8, symbol='diamond'), name="All domains"))
+    max_proj_fig.update_layout(title="Maximum Projection", xaxis=dict(autorange="reversed"), yaxis=dict(scaleanchor="x"), width=1200, height=1200, plot_bgcolor='white')
+    max_proj_fig.write_image(out_dir / f"{base_id or 'spots'}_max_proj.png", scale=2)
 
-    # Middle slice
-    mid_z = raw.shape[0]//2
-    mid_slice_fig = go.Figure()
-    mid_slice_fig.add_trace(go.Heatmap(z=raw[mid_z], colorscale="gray"))
-    mid_slice_fig.add_trace(contour_trace(mid_z))
-    mid_slice_spots = spots_df[spots_df.centroid_z == mid_z]
-    mid_slice_fig.add_trace(go.Scatter(
-        x=mid_slice_spots.centroid_x,
-        y=mid_slice_spots.centroid_y,
-        mode="markers",
-        marker=dict(size=2, color="red", opacity=0.9),
-        name="Spots in slice"
-    ))
-    mid_slice_fig.update_layout(
-        title=f"Middle slice (Z={mid_z})",
-        xaxis=dict(title="X", autorange="reversed"),
-        yaxis=dict(title="Y", scaleanchor="x"),
-        width=2400, height=2400,  # Increased size
-        plot_bgcolor='white'
-    )
-    mid_slice_fig.write_image(
-        out_dir / f"{base_id or 'spots'}_mid_slice.png",
-        scale=4  # Increased resolution scale
-    )
+    print(f"Successfully generated plots for {base_id}")
     return fig
+
 
 def batch_render_spots_z_slider(
     spots_dir: Path,
     mask_dir: Path,
     raw_img_dir: Path,
     qc_out: Path,
+    domains_dir: Path = None,
     z_range: tuple = None,
     n_samples: int = None
 ):
     """
-    Batch rendering for spot z-slider visualizations.
-    Matches spot files with corresponding masks and raw images.
+    Batch rendering for spot and domain z-slider visualizations.
+
+    Parameters:
+    - spots_dir: Directory containing spot CSV files (e.g., from 'results_spots').
+    - mask_dir: Directory containing the corresponding mask TIFF files.
+    - raw_img_dir: Directory containing the corresponding raw image TIFF files.
+    - qc_out: The output directory for the generated QC plots.
+    - domains_dir: (Optional) Directory containing domain CSV files (e.g., from 'results_domains').
+    - z_range: (Optional) A tuple (start, end) to crop the Z-axis.
+    - n_samples: (Optional) Number of random samples to process.
     """
     qc_out.mkdir(parents=True, exist_ok=True)
-    spot_files = list(spots_dir.glob("*_spots.csv"))
+    spot_files = list(spots_dir.glob("*.csv"))
     if not spot_files:
-        print("No spot CSV files found.")
+        print(f"No spot CSV files found in {spots_dir}")
         return
 
     if n_samples:
         spot_files = random.sample(spot_files, min(n_samples, len(spot_files)))
 
     for spot_fp in spot_files:
-        base = spot_fp.stem.replace("_spots", "")
+        base = spot_fp.stem.replace("_spots_mapped", "").replace(".csv", "")
 
-        # Mask file
-        mask_fp_candidates = list(mask_dir.glob(f"{base}.tif"))
-        # if not mask_fp_candidates:
-        #     # Try with _t00 ending for mask
-        #     base_with_t00 = base
-        # if not base.endswith("_t00"):
-        #     base_with_t00 = base + "_t00"
-        #     mask_fp_candidates = list(mask_dir.glob(f"{base_with_t00}.tif"))
-        mask_fp = mask_fp_candidates[0] if mask_fp_candidates else None
+        # Find corresponding files
+        mask_fp = next(mask_dir.glob(f"{base}*.tif"), None)
+        raw_fp = next(raw_img_dir.glob(f"{base}*.tif"), None)
+        
+        domains_fp = None
+        if domains_dir:
+            domains_fp_candidate = domains_dir / f"{base}_domains.csv"
+            if domains_fp_candidate.exists():
+                domains_fp = str(domains_fp_candidate)
 
-        # Raw image
-        base_with_n2v = base.replace("_t", "_n2v_t")
-        raw_fp_candidates = list(raw_img_dir.glob(f"{base_with_n2v}*.tif"))
-        if not raw_fp_candidates:
-            base_no_t = base.split("_t")[0]
-            raw_fp_candidates = list(raw_img_dir.glob(f"{base_no_t}_n2v.tif"))
-        if not raw_fp_candidates:
-            raw_fp_candidates = list(raw_img_dir.glob(f"{base}.tif"))
-        raw_fp = raw_fp_candidates[0] if raw_fp_candidates else None
-
-        # Validate presence of files
-        missing = [name for p, name in [
-            (mask_fp, "mask TIFF"),
-            (raw_fp, "raw TIFF")
-        ] if p is None or not Path(p).exists()]
-
-        if missing:
-            print(f"Skipping {base}: missing {', '.join(missing)}")
+        # Validate that all required files exist
+        if not all([mask_fp, raw_fp]):
+            print(f"Skipping {base}: missing mask or raw TIFF file.")
             continue
 
         # Run renderer
-        render_spots_z_slider(
-            spots_path=str(spot_fp),
-            mask_path=str(mask_fp),
-            original_img_path=str(raw_fp),
-            z_range=z_range,
-            output_path=str(qc_out),
-            base_id=base
-        )
-        print(f" Rendered Z-slider for {base}")
+        try:
+            render_spots_z_slider(
+                spots_path=str(spot_fp),
+                mask_path=str(mask_fp),
+                original_img_path=str(raw_fp),
+                domains_path=domains_fp,
+                z_range=z_range,
+                output_path=str(qc_out),
+                base_id=base
+            )
+        except Exception as e:
+            print(f"!!! Failed to render visualization for {base}: {e}")
+
+
 
 
 

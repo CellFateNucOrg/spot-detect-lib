@@ -2,8 +2,8 @@
 #SBATCH --job-name=SPOT_det
 #SBATCH --output=SPOT_det_%j.out
 #SBATCH --error=SPOT_det_%j.err
-#SBATCH --time=2:00:00
-#SBATCH --mem=64G
+#SBATCH --time=6:00:00
+#SBATCH --mem=124G
 #SBATCH --cpus-per-task=4
 #SBATCH --ntasks=1
 #SBATCH --partition=all
@@ -32,9 +32,16 @@
 # NUCLEI_CSV_DIR="${BASE_DIR}/nuclei/"
 # OUTPUT_DIR="${BASE_DIR}/spots/"
 
-# RAW_DIR='/mnt/external.data/MeisterLab/Dario/SDC1/1273/20241010_e_tl/'
-# BASE_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241010_e_tl/"
+# RAW_DIR='/mnt/external.data/MeisterLab/Dario/SDC1/1273/20241108_e_hs/'
+# BASE_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/new_algorithm/20241108_e_hs/"
 # INPUT_DIR="${RAW_DIR}/N2V_dpy27_mSG_emr1_mCh/denoised/"
+# NUCLEI_MASK_DIR="${BASE_DIR}/segmentation/"
+# NUCLEI_CSV_DIR="${BASE_DIR}/nuclei/"
+# OUTPUT_DIR="${BASE_DIR}/spots/"
+
+# RAW_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/high_res_images/1268/"
+# BASE_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/new_algorithm/1268_fast_imaging/"
+# INPUT_DIR="${RAW_DIR}"
 # NUCLEI_MASK_DIR="${BASE_DIR}/segmentation/"
 # NUCLEI_CSV_DIR="${BASE_DIR}/nuclei/"
 # OUTPUT_DIR="${BASE_DIR}/spots/"

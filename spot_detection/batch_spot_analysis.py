@@ -9,19 +9,18 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import bioio
 import bioio_tifffile
+from skimage import io
 from pathlib import Path
 from tqdm import tqdm
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from aicsimageio import AICSImage
 from spot_analysis import (
-    detect_spots_MPHD,
+    detect_spots_watershed,
     analyze_spots,
-    visualize_results,
     load_nuclei_data,
     count_spots_in_nuclei,
-    calculate_spatial_metrics,
-    visualize_distribution
+    calculate_spatial_metrics
 )
 import tifffile
 
@@ -72,7 +71,12 @@ def split_5d_tiff_to_timepoints(input_path: Path, output_dir: Path) -> None:
 
 
 
-def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir, nuclei_csv_dir, spot_channel):
+def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir, 
+                        nuclei_csv_dir, spot_channel):
+    """
+    Processes a single image: detects spots, saves results including 
+    segmentation masks, and runs analysis.
+    """
     image_path = os.path.join(input_dir, image_file)
     name_wo_ext = os.path.splitext(image_file)[0]
 
@@ -83,10 +87,8 @@ def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir, nuc
         base_name = re.sub(r'n2v_', '', name_wo_ext)
 
     # Construct mask and CSV paths
-    mask_filename = f"{base_name}.tif"
-    mask_path = os.path.join(nuclei_mask_dir, mask_filename)
-    csv_filename = f"{base_name}.csv"
-    csv_path = os.path.join(nuclei_csv_dir, csv_filename)
+    mask_path = os.path.join(nuclei_mask_dir, f"{base_name}.tif")
+    csv_path = os.path.join(nuclei_csv_dir, f"{base_name}.csv")
 
     # Skip if files missing
     if not os.path.isfile(mask_path):
@@ -96,44 +98,45 @@ def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir, nuc
         return {'image': image_file, 'error': f"Missing nuclei CSV: {csv_path}"}
 
     # Detect spots
-    # try:
-    #     spots_df, _, _, _ = detect_spots_MPHD(
-    #         image_path=image_path,
-    #         spot_channel=spot_channel,
-    #         sigma=1,
-    #         h_percentile=75,
-    #         peak_percentile=70,
-    #         min_distance=3,
-    #         min_volume=10,
-    #         max_volume=100,
-    #         intensity_percentile=85,
-    #         nuclei_mask_path=mask_path
-    #     )
-    #high resolution
     try:
-        spots_df, _, _, _ = detect_spots_MPHD(
+        spots_df, _, _, spot_labels = detect_spots_watershed(
             image_path=image_path,
             spot_channel=spot_channel,
-            sigma=1.5,
-            h_percentile=75,
-            peak_percentile=70,
-            min_distance=3,
-            min_volume=10,
-            max_volume=500,
+            selem_radius=4,
+            min_peak_distance=20,
+            peak_min_intensity_factor=0.20,
+            min_volume=100,
+            max_volume=1000,
             intensity_percentile=85,
-            nuclei_mask_path=mask_path
+            nuclei_mask_path=mask_path,
+            merge_gap=1,
+            save_outputs=True
         )
 
     except Exception as e:
         return {'image': image_file, 'error': f"Detection failed: {str(e)}"}
 
-    # Save spots
-    spots_output = os.path.join(output_dir, f"{base_name}_spots.csv")
-    spots_df.to_csv(spots_output, index=False)
+    # Save spot segmentation mask
+    spot_seg_dir = os.path.join(output_dir, 'spot_segmentation')
+    os.makedirs(spot_seg_dir, exist_ok=True)
+    spot_mask_output_path = os.path.join(spot_seg_dir, f"{base_name}_spot_mask.tif")
+    tifffile.imwrite(
+        spot_mask_output_path,
+        spot_labels[np.newaxis, np.newaxis, ...].astype(np.uint16),
+        photometric="minisblack",
+        metadata={"axes": "ZYX"}
+    )
+    print(f"Saved spot segmentation mask to: {spot_mask_output_path}")
 
-    # Analyze spots (optional)
+    # Run downstream analysis
     try:
-        spots_mapped, _ = analyze_spots(spots_output, csv_path, mask_path, plot=True)
+        analyze_spots(
+            spots_csv_path=spots_csv_output_path, 
+            nuclei_csv_path=csv_path, 
+            mask_path=mask_path, 
+            output_dir=output_dir
+        )
+
     except Exception as e:
         return {'image': image_file, 'error': f"Analysis failed: {str(e)}"}
 
@@ -141,7 +144,9 @@ def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir, nuc
         'image': image_file,
         'total_spots': len(spots_df),
         'nuclei_data_available': True,
-        'error': None
+        'error': None,
+        'message': f'Successfully processed. Results in {output_dir}',
+        'spot_mask_path': spot_mask_output_path
     }
 
 

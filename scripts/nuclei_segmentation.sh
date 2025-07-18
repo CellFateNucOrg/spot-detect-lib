@@ -14,10 +14,15 @@ set -euo pipefail
 # ——— User parameters ———
 #High res images - nuclei size needs to be changed in segment.py so far, be careful of memory requirements,
 # might need to use --mem=124G and wait for resource allocation
-RAW_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/high_res_images/1273/"
+# RAW_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/high_res_images/1273/"
+# DENOISED_DIR="None"
+# MODEL_DIR="/mnt/external.data/MeisterLab/lhinder/segmentation_3d_anja/code/worms_1000epochs_v0"
+# OUT_ROOT="/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273_fast_imaging/"
+
+RAW_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/new_algorithm/all_ds_test/raw_images/"
 DENOISED_DIR="None"
 MODEL_DIR="/mnt/external.data/MeisterLab/lhinder/segmentation_3d_anja/code/worms_1000epochs_v0"
-OUT_ROOT="/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273_fast_imaging/"
+OUT_ROOT="/mnt/external.data/MeisterLab/mvolosko/image_project/new_algorithm/all_ds_test/"
 
 # RAW_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/high_res_images/1268/"
 # DENOISED_DIR="None"
