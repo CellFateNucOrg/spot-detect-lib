@@ -103,6 +103,7 @@ apptainer exec --nv sponuc.sif micromamba create -y -p /envs/sponuc -f sponuc_en
 This environment was installed with minimum requirments, to avoid packages incompatibility. And later the needed packages were installed with requirments.txt via pip.
 In order to install new or update packages inside the environment, the following command should be executed in the spot_detection_environment folder:
 ```bash
-apptainer exec --nv sponuc.sif micromamba run -p ./sponuc-env pip install -r requirements.txt #you should update the requirments.txt with packages you want to have
+#you should update the requirments.txt with packages you want to have
+apptainer exec --nv sponuc.sif micromamba run -p ./sponuc-env pip install -r requirements.txt
 ```
 
