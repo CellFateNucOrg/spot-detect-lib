@@ -256,7 +256,7 @@ def render_spots_z_slider(
     mask_path: str,
     domains_path: str = None,
     z_range: tuple = None,
-    output_path: str = ".",
+    output_path: str = None,
     base_id: str = None
 ):
     """
@@ -278,7 +278,7 @@ def render_spots_z_slider(
     print(f"--- Rendering visualization for {base_id} ---")
     # --- Load Data ---
     spots_df = pd.read_csv(spots_path)
-    spots_df['centroid_z'] = spots_df['centroid_z'].round().astype(int)
+    spots_df['axis-0'] = spots_df['axis-0'].round().astype(int)
 
     raw = AICSImage(original_img_path).get_image_data("ZYX", T=0, C=1)
     raw = np.squeeze(raw).astype(np.float32)
@@ -291,7 +291,7 @@ def render_spots_z_slider(
         try:
             domains_df = pd.read_csv(domains_path)
             if not domains_df.empty:
-                domains_df['domain_centroid_z'] = domains_df['domain_centroid_z'].round().astype(int)
+                domains_df['axis-0'] = domains_df['axis-0'].round().astype(int)
                 print(f"Loaded {len(domains_df)} domains.")
             else:
                 domains_df = None # Treat empty file as no domains
@@ -304,9 +304,9 @@ def render_spots_z_slider(
         z0, z1 = z_range
         raw = raw[z0:z1]
         mask = mask[z0:z1]
-        spots_df = spots_df.query("@z0 <= centroid_z < @z1").assign(centroid_z=lambda df: df.centroid_z - z0)
+        spots_df = spots_df.query("@z0 <= `axis-0` < @z1").assign(**{"axis-0": lambda df: df["axis-0"] - z0})
         if domains_df is not None:
-            domains_df = domains_df.query("@z0 <= domain_centroid_z < @z1").assign(domain_centroid_z=lambda df: df.domain_centroid_z - z0)
+            domains_df = domains_df.query("@z0 <= `axis-0` < @z1").assign(**{"axis-0": lambda df: df["axis-0"] - z0})
 
     nz, ny, nx = raw.shape
 
@@ -325,13 +325,13 @@ def render_spots_z_slider(
         for dz in range(-z_neighbor_range, z_neighbor_range + 1):
             current_z = z + dz
             if 0 <= current_z < nz:
-                sp = spots_df[spots_df.centroid_z == current_z]
+                sp = spots_df[spots_df['axis-0'] == current_z]
                 if sp.empty: continue
                 is_current_slice = (dz == 0)
                 opacity = 1.0 if is_current_slice else max(0.1, 1 - abs(dz) / (z_neighbor_range + 1))
                 color = f"rgba(255, 0, 0, {opacity:.2f})"
                 traces.append(go.Scatter(
-                    x=sp.centroid_x, y=sp.centroid_y, mode="markers",
+                    x=sp['axis-1'], y=sp['axis-2'], mode="markers",
                     marker=dict(size=8, color=color, symbol="circle-open", line=dict(width=2 if is_current_slice else 1)),
                     name=f"Spots (z={current_z})" if not is_current_slice else "Spots (current z)",
                     showlegend=is_current_slice
@@ -341,14 +341,14 @@ def render_spots_z_slider(
             for dz in range(-z_neighbor_range, z_neighbor_range + 1):
                 current_z = z + dz
                 if 0 <= current_z < nz:
-                    dom = domains_df[domains_df.domain_centroid_z == current_z]
+                    dom = domains_df[domains_df['axis-0'] == current_z]
                     if dom.empty: continue
                     is_current_slice = (dz == 0)
                     opacity = 1.0 if is_current_slice else max(0.1, 1 - abs(dz) / (z_neighbor_range + 1))
                     color = f"rgba(0, 255, 255, {opacity:.2f})"  # Cyan for domains
                     traces.append(go.Scatter(
-                        x=dom.domain_centroid_x, y=dom.domain_centroid_y, mode="markers",
-                        marker=dict(size=10, color=color, symbol="diamond", line=dict(width=2 if is_current_slice else 1)),
+                        x=dom['axis-1'], y=dom['axis-2'], mode="markers",
+                        marker=dict(size=5, color=color, symbol="diamond", line=dict(width=2 if is_current_slice else 1)),
                         name=f"Domains (z={current_z})" if not is_current_slice else "Domains (current z)",
                         showlegend=is_current_slice
                     ))
@@ -373,7 +373,7 @@ def render_spots_z_slider(
     # --- Save HTML output ---
     out_dir = Path(output_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig.write_html(out_dir / f"{base_id or 'spots'}_z_slider.html", include_plotlyjs="cdn", full_html=True)
+    fig.write_html(out_dir / f"{base_id}_z_slider.html", include_plotlyjs="cdn", full_html=True)
 
     # --- Save Static PNGs ---
     # Maximum projection
@@ -385,18 +385,218 @@ def render_spots_z_slider(
             all_contours_x.extend(c[:, 1].tolist() + [None])
             all_contours_y.extend(c[:, 0].tolist() + [None])
     max_proj_fig.add_trace(go.Scatter(x=all_contours_x, y=all_contours_y, mode="lines", line=dict(color="deepskyblue", width=1), name="Nuclei outlines", opacity=0.5))
-    max_proj_fig.add_trace(go.Scatter(x=spots_df.centroid_x, y=spots_df.centroid_y, mode="markers", marker=dict(size=2, color="red", opacity=0.6), name="All spots"))
+    max_proj_fig.add_trace(go.Scatter(x=spots_df['axis-1'], y=spots_df['axis-2'], mode="markers", marker=dict(size=2, color="red", opacity=0.6), name="All spots"))
     if domains_df is not None:
-        max_proj_fig.add_trace(go.Scatter(x=domains_df.domain_centroid_x, y=domains_df.domain_centroid_y, mode="markers", marker=dict(size=4, color="cyan", opacity=0.8, symbol='diamond'), name="All domains"))
-    max_proj_fig.update_layout(title="Maximum Projection", xaxis=dict(autorange="reversed"), yaxis=dict(scaleanchor="x"), width=1200, height=1200, plot_bgcolor='white')
-    max_proj_fig.write_image(out_dir / f"{base_id or 'spots'}_max_proj.png", scale=2)
+        max_proj_fig.add_trace(go.Scatter(x=domains_df['axis-1'], y=domains_df['axis-2'], mode="markers", marker=dict(size=4, color="cyan", opacity=0.8, symbol='diamond'), name="All domains"))
+    max_proj_fig.update_layout(title="Maximum projection", xaxis=dict(autorange="reversed"), yaxis=dict(scaleanchor="x"), width=1200, height=1200, plot_bgcolor='white')
+    max_proj_fig.write_image(out_dir / f"{base_id}_max_proj.png", scale=2)
 
     print(f"Successfully generated plots for {base_id}")
     return fig
 
 
+
+def render_spots_z_slider(
+    spot_mask_dir: Path, # Changed from spots_path to spot_mask_dir
+    original_img_path: str,
+    mask_path: str,
+    domains_path: str = None,
+    z_range: tuple = None,
+    output_path: str = None,
+    base_id: str = None
+):
+    """
+    Generates a 2D z-slice explorer with spot masks, domains, and nuclei outlines.
+    This function creates an interactive HTML file with a slider to navigate through
+    z-slices, overlaying spot masks and domains from neighboring slices. It also saves
+    static maximum projection and middle-slice images.
+
+    Parameters:
+    - spot_mask_dir: Directory containing the spot mask TIFF files (e.g., from 'spot_segmentation').
+    - original_img_path: Path to the raw 3D image.
+    - mask_path: Path to the 3D nuclei/shape mask.
+    - domains_path: (Optional) Path to the domain coordinates CSV file.
+    - z_range: (Optional) A tuple (start, end) to crop the Z-axis.
+    - output_path: Directory to save the HTML and PNG outputs.
+    - base_id: A unique identifier for the output files.
+    """
+    print(f"--- Rendering visualization for {base_id} ---")
+
+    # Construct the full path to the spot mask TIFF file
+    spot_mask_path = spot_mask_dir / f"{base_id}_spot_mask.tif"
+    if not spot_mask_path.exists():
+        print(f"Error: Spot mask file not found at {spot_mask_path}")
+        return
+
+    # --- Load Data ---
+    raw = AICSImage(original_img_path).get_image_data("ZYX", T=0, C=1)
+    raw = np.squeeze(raw).astype(np.float32)
+
+    nuclei_mask = AICSImage(mask_path).get_image_data("ZYX", T=0, C=0)
+    nuclei_mask = np.squeeze(nuclei_mask).astype(np.uint8)
+
+    spot_mask = tifffile.imread(str(spot_mask_path)) # Load the spot mask TIFF
+    spot_mask = np.squeeze(spot_mask).astype(np.uint16) # Ensure correct dtype
+
+    # --- Load Domain Data (if provided) ---
+    domains_df = None
+    if domains_path and Path(domains_path).exists():
+        try:
+            domains_df = pd.read_csv(domains_path)
+            if not domains_df.empty:
+                domains_df['axis-0'] = domains_df['axis-0'].round().astype(int)
+                print(f"Loaded {len(domains_df)} domains.")
+            else:
+                domains_df = None # Treat empty file as no domains
+        except Exception as e:
+            print(f"Could not load or process domains file {domains_path}: {e}")
+            domains_df = None
+
+    # --- Optional z-range cropping ---
+    if z_range is not None:
+        z0, z1 = z_range
+        raw = raw[z0:z1]
+        nuclei_mask = nuclei_mask[z0:z1]
+        spot_mask = spot_mask[z0:z1] # Crop spot mask
+
+        if domains_df is not None:
+            domains_df = domains_df.query("@z0 <= `axis-0` < @z1").assign(**{"axis-0": lambda df: df["axis-0"] - z0})
+    nz, ny, nx = raw.shape
+
+    # --- Helper functions for plotting ---
+    def contour_trace_nuclei(z):
+        contours = find_contours(nuclei_mask[z] > 0, 0.5)
+        x_all, y_all = [], []
+        for c in contours:
+            x_all.extend(c[:, 1].tolist() + [None])
+            y_all.extend(c[:, 0].tolist() + [None])
+        return go.Scatter(x=x_all, y=y_all, mode="lines", line=dict(color="deepskyblue", width=1.5), name="Nuclei outlines", showlegend=False)
+
+    def create_spot_mask_traces(z, z_neighbor_range=5):
+        traces = []
+        for dz in range(-z_neighbor_range, z_neighbor_range + 1):
+            current_z = z + dz
+            if 0 <= current_z < nz:
+                # Extract the current z-slice of the spot mask
+                current_spot_slice = spot_mask[current_z]
+                unique_spot_labels = np.unique(current_spot_slice)
+                
+                # Filter out background label (0)
+                valid_spot_labels = [lbl for lbl in unique_spot_labels if lbl != 0]
+
+                if not valid_spot_labels:
+                    continue
+
+                is_current_slice = (dz == 0)
+                opacity = 1.0 if is_current_slice else max(0.1, 1 - abs(dz) / (z_neighbor_range + 1))
+                color = f"rgba(255, 0, 0, {opacity:.2f})" # Red for spots
+
+                x_all_spots, y_all_spots = [], []
+                for spot_lbl in valid_spot_labels:
+                    spot_contours = find_contours(current_spot_slice == spot_lbl, 0.5)
+                    for c in spot_contours:
+                        x_all_spots.extend(c[:, 1].tolist() + [None])
+                        y_all_spots.extend(c[:, 0].tolist() + [None])
+                
+                if x_all_spots: # Only add trace if there are contours
+                    traces.append(go.Scatter(
+                        x=x_all_spots, y=y_all_spots, mode="lines",
+                        line=dict(color=color, width=2 if is_current_slice else 1),
+                        name=f"Spot Mask (z={current_z})" if not is_current_slice else "Spot Mask (current z)",
+                        showlegend=is_current_slice
+                    ))
+        return traces
+
+    def create_domain_traces(z, z_neighbor_range=5):
+        traces = []
+        # Plot domains
+        if domains_df is not None:
+            for dz in range(-z_neighbor_range, z_neighbor_range + 1):
+                current_z = z + dz
+                if 0 <= current_z < nz:
+                    dom = domains_df[domains_df['axis-0'] == current_z]
+                    if dom.empty: continue
+                    is_current_slice = (dz == 0)
+                    opacity = 1.0 if is_current_slice else max(0.1, 1 - abs(dz) / (z_neighbor_range + 1))
+                    color = f"rgba(0, 255, 255, {opacity:.2f})" # Cyan for domains
+                    traces.append(go.Scatter(
+                        x=dom['axis-1'], y=dom['axis-2'], mode="markers",
+                        marker=dict(size=5, color=color, symbol="diamond", line=dict(width=2 if is_current_slice else 1)),
+                        name=f"Domains (z={current_z})" if not is_current_slice else "Domains (current z)",
+                        showlegend=is_current_slice
+                    ))
+        return traces
+
+    # --- Build figure frames ---
+    # Combine nuclei contours, spot mask contours, and domain markers
+    frames = [go.Frame(data=[
+        go.Heatmap(z=raw[z], colorscale="gray"),
+        contour_trace_nuclei(z)
+    ] + create_spot_mask_traces(z) + create_domain_traces(z), name=str(z)) for z in range(nz)]
+
+    slider_steps = [dict(method="animate", args=([str(z)], dict(mode="immediate", frame=dict(duration=0), transition=dict(duration=0))), label=str(z)) for z in range(nz)]
+
+    # --- Assemble figure ---
+    fig = go.Figure(data=[
+        go.Heatmap(z=raw[0], colorscale="gray"),
+        contour_trace_nuclei(0)
+    ] + create_spot_mask_traces(0) + create_domain_traces(0), frames=frames)
+
+    fig.update_layout(
+        title=f"Spots, Domains & Nuclei Outlines: {base_id or ''}".strip(),
+        xaxis=dict(title="X", autorange="reversed"), yaxis=dict(title="Y", scaleanchor="x"),
+        width=900, height=900, legend=dict(x=1.05, y=1),
+        sliders=[dict(active=0, pad={"t": 50}, steps=slider_steps)],
+        updatemenus=[dict(type="buttons", showactive=False, y=1, x=1.15, xanchor="right", yanchor="top", buttons=[
+            dict(label="Play", method="animate", args=[None, {"frame": {"duration": 200}, "fromcurrent": True}]),
+            dict(label="Pause", method="animate", args=[[None], {"frame": {"duration": 0}, "mode": "immediate"}])])]
+    )
+
+    # --- Save HTML output ---
+    out_dir = Path(output_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fig.write_html(out_dir / f"{base_id}_z_slider.html", include_plotlyjs="cdn", full_html=True)
+    print(f"Interactive Z-slider HTML saved to: {out_dir / f'{base_id}_z_slider.html'}")
+
+    # --- Save Static PNGs ---
+    # Maximum projection
+    max_proj_fig = go.Figure(go.Heatmap(z=np.max(raw, axis=0), colorscale="gray"))
+    
+    # Add nuclei contours to max projection
+    all_nuclei_contours_x, all_nuclei_contours_y = [], []
+    for z_idx in range(raw.shape[0]):
+        contours = find_contours(nuclei_mask[z_idx] > 0, 0.5)
+        for c in contours:
+            all_nuclei_contours_x.extend(c[:, 1].tolist() + [None])
+            all_nuclei_contours_y.extend(c[:, 0].tolist() + [None])
+    max_proj_fig.add_trace(go.Scatter(x=all_nuclei_contours_x, y=all_nuclei_contours_y, mode="lines", line=dict(color="deepskyblue", width=1), name="Nuclei outlines", opacity=0.5))
+
+    # Add spot mask contours to max projection
+    all_spot_contours_x, all_spot_contours_y = [], []
+    for z_idx in range(raw.shape[0]):
+        current_spot_slice = spot_mask[z_idx]
+        unique_spot_labels = np.unique(current_spot_slice)
+        valid_spot_labels = [lbl for lbl in unique_spot_labels if lbl != 0]
+        for spot_lbl in valid_spot_labels:
+            spot_contours = find_contours(current_spot_slice == spot_lbl, 0.5)
+            for c in spot_contours:
+                all_spot_contours_x.extend(c[:, 1].tolist() + [None])
+                all_spot_contours_y.extend(c[:, 0].tolist() + [None])
+    max_proj_fig.add_trace(go.Scatter(x=all_spot_contours_x, y=all_spot_contours_y, mode="lines", line=dict(color="red", width=1), name="All spot masks", opacity=0.6))
+
+    # Add domains to max projection
+    if domains_df is not None:
+        max_proj_fig.add_trace(go.Scatter(x=domains_df['axis-1'], y=domains_df['axis-2'], mode="markers", marker=dict(size=4, color="cyan", opacity=0.8, symbol='diamond'), name="All domains"))
+
+    max_proj_fig.update_layout(title="Maximum projection", xaxis=dict(autorange="reversed"), yaxis=dict(scaleanchor="x"), width=1200, height=1200, plot_bgcolor='white')
+    max_proj_fig.write_image(out_dir / f"{base_id}_max_proj.png", scale=2)
+    print(f"Maximum projection PNG saved to: {out_dir / f'{base_id}_max_proj.png'}")
+
+    print(f"Successfully generated plots for {base_id}")
+    return fig
+
 def batch_render_spots_z_slider(
-    spots_dir: Path,
+    spot_mask_parent_dir: Path, # Changed to parent directory of spot_segmentation
     mask_dir: Path,
     raw_img_dir: Path,
     qc_out: Path,
@@ -405,11 +605,11 @@ def batch_render_spots_z_slider(
     n_samples: int = None
 ):
     """
-    Batch rendering for spot and domain z-slider visualizations.
+    Batch rendering for spot mask and domain z-slider visualizations.
 
     Parameters:
-    - spots_dir: Directory containing spot CSV files (e.g., from 'results_spots').
-    - mask_dir: Directory containing the corresponding mask TIFF files.
+    - spot_mask_parent_dir: The parent directory which contains the 'spot_segmentation' folder.
+    - mask_dir: Directory containing the corresponding nuclei mask TIFF files.
     - raw_img_dir: Directory containing the corresponding raw image TIFF files.
     - qc_out: The output directory for the generated QC plots.
     - domains_dir: (Optional) Directory containing domain CSV files (e.g., from 'results_domains').
@@ -417,21 +617,29 @@ def batch_render_spots_z_slider(
     - n_samples: (Optional) Number of random samples to process.
     """
     qc_out.mkdir(parents=True, exist_ok=True)
-    spot_files = list(spots_dir.glob("*.csv"))
-    if not spot_files:
-        print(f"No spot CSV files found in {spots_dir}")
+    
+    # The spot masks are located in spot_mask_parent_dir / 'spot_segmentation'
+    spot_seg_dir = spot_mask_parent_dir / 'spot_segmentation'
+    if not spot_seg_dir.exists():
+        print(f"Error: Spot segmentation directory not found at {spot_seg_dir}")
+        return
+
+    # Find spot mask TIFF files
+    spot_mask_files = list(spot_seg_dir.glob("*_spot_mask.tif"))
+    if not spot_mask_files:
+        print(f"No spot mask TIFF files found in {spot_seg_dir}")
         return
 
     if n_samples:
-        spot_files = random.sample(spot_files, min(n_samples, len(spot_files)))
+        spot_mask_files = random.sample(spot_mask_files, min(n_samples, len(spot_mask_files)))
 
-    for spot_fp in spot_files:
-        base = spot_fp.stem.replace("_spots_mapped", "").replace(".csv", "")
+    for spot_mask_fp in spot_mask_files:
+        # Extract base_id from the spot mask filename (e.g., 'my_image_t00_spot_mask.tif' -> 'my_image_t00')
+        base = spot_mask_fp.stem.replace("_spot_mask", "")
 
         # Find corresponding files
         mask_fp = next(mask_dir.glob(f"{base}*.tif"), None)
         raw_fp = next(raw_img_dir.glob(f"{base}*.tif"), None)
-        
         domains_fp = None
         if domains_dir:
             domains_fp_candidate = domains_dir / f"{base}_domains.csv"
@@ -439,14 +647,17 @@ def batch_render_spots_z_slider(
                 domains_fp = str(domains_fp_candidate)
 
         # Validate that all required files exist
-        if not all([mask_fp, raw_fp]):
-            print(f"Skipping {base}: missing mask or raw TIFF file.")
+        if not mask_fp:
+            print(f"Skipping {base}: missing nuclei mask TIFF file.")
+            continue
+        if not raw_fp:
+            print(f"Skipping {base}: missing raw TIFF file.")
             continue
 
         # Run renderer
         try:
             render_spots_z_slider(
-                spots_path=str(spot_fp),
+                spot_mask_dir=spot_seg_dir, # Pass the directory containing the spot masks
                 mask_path=str(mask_fp),
                 original_img_path=str(raw_fp),
                 domains_path=domains_fp,
@@ -458,23 +669,89 @@ def batch_render_spots_z_slider(
             print(f"!!! Failed to render visualization for {base}: {e}")
 
 
+# def batch_render_spots_z_slider(
+#     spots_dir: Path,
+#     mask_dir: Path,
+#     raw_img_dir: Path,
+#     qc_out: Path,
+#     domains_dir: Path = None,
+#     z_range: tuple = None,
+#     n_samples: int = None
+# ):
+#     """
+#     Batch rendering for spot and domain z-slider visualizations.
+
+#     Parameters:
+#     - spots_dir: Directory containing spot CSV files (e.g., from 'results_spots').
+#     - mask_dir: Directory containing the corresponding mask TIFF files.
+#     - raw_img_dir: Directory containing the corresponding raw image TIFF files.
+#     - qc_out: The output directory for the generated QC plots.
+#     - domains_dir: (Optional) Directory containing domain CSV files (e.g., from 'results_domains').
+#     - z_range: (Optional) A tuple (start, end) to crop the Z-axis.
+#     - n_samples: (Optional) Number of random samples to process.
+#     """
+#     qc_out.mkdir(parents=True, exist_ok=True)
+#     spot_files = list(spots_dir.glob("*.csv"))
+#     if not spot_files:
+#         print(f"No spot CSV files found in {spots_dir}")
+#         return
+
+#     if n_samples:
+#         spot_files = random.sample(spot_files, min(n_samples, len(spot_files)))
+
+#     for spot_fp in spot_files:
+#         base = spot_fp.stem.replace("_spots", "").replace(".csv", "")
+
+#         # Find corresponding files
+#         mask_fp = next(mask_dir.glob(f"{base}*.tif"), None)
+#         raw_fp = next(raw_img_dir.glob(f"{base}*.tif"), None)
+        
+#         domains_fp = None
+#         if domains_dir:
+#             domains_fp_candidate = domains_dir / f"{base}_domains.csv"
+#             if domains_fp_candidate.exists():
+#                 domains_fp = str(domains_fp_candidate)
+
+#         # Validate that all required files exist
+#         if not mask_fp:
+#             print(f"Skipping {base}: missing mask TIFF file.")
+#             continue
+#         if not raw_fp:
+#             print(f"Skipping {base}: missing raw TIFF file.")
+#             continue
+
+#         # Run renderer
+#         try:
+#             render_spots_z_slider(
+#                 spots_path=str(spot_fp),
+#                 mask_path=str(mask_fp),
+#                 original_img_path=str(raw_fp),
+#                 domains_path=domains_fp,
+#                 z_range=z_range,
+#                 output_path=str(qc_out),
+#                 base_id=base
+#             )
+#         except Exception as e:
+#             print(f"!!! Failed to render visualization for {base}: {e}")
 
 
 
-# Example usage:
-if __name__ == "__main__":
-    spots_path = "/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/spots/count_spots/20241107_1273_E_30minHS_3h_5min_5um_t13_spots.csv"
-    original_img_path = '/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/spots/raw_images_timelapse/20241107_1273_E_30minHS_3h_5min_5um_n2v_t13.tif'
-    mask_path = "/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/segmentation/20241107_1273_E_30minHS_3h_5min_5um_t13.tif"
-    csv_path = "/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/nuclei/20241107_1273_E_30minHS_3h_5min_5um_t13.csv"
-    output_path = '/mnt/external.data/MeisterLab/mvolosko/image_project/spot-detect-lib/spot_detection/'
 
-    render_spots_z_slider(
-        spots_path=spots_path,
-        original_img_path=original_img_path,
-        #z_range=(10, 50),          # optional
-        output_path=output_path,
-        base_id="experiment_1",
-        mask_path=mask_path
-    )
+
+# # Example usage:
+# if __name__ == "__main__":
+#     spots_path = "/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/spots/count_spots/20241107_1273_E_30minHS_3h_5min_5um_t13_spots.csv"
+#     original_img_path = '/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/spots/raw_images_timelapse/20241107_1273_E_30minHS_3h_5min_5um_n2v_t13.tif'
+#     mask_path = "/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/segmentation/20241107_1273_E_30minHS_3h_5min_5um_t13.tif"
+#     csv_path = "/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1273/20241108_e_hs/nuclei/20241107_1273_E_30minHS_3h_5min_5um_t13.csv"
+#     output_path = '/mnt/external.data/MeisterLab/mvolosko/image_project/spot-detect-lib/spot_detection/'
+
+#     render_spots_z_slider(
+#         spots_path=spots_path,
+#         original_img_path=original_img_path,
+#         #z_range=(10, 50),          # optional
+#         output_path=output_path,
+#         base_id="experiment_1",
+#         mask_path=mask_path
+#     )
 

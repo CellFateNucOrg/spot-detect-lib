@@ -26,7 +26,7 @@ class Segmenter:
         self,
         model_path: Path,
         gpu: bool = True,
-        diameter: float = 125, #None,
+        diameter: float = None, #125 - for high resolution images
         nuc_channel: int = 0,
         stitch_threshold: float = 0.3,
         cellprob_threshold: float = 0.0,
@@ -71,7 +71,7 @@ class Segmenter:
             cellprob_threshold=self.cellprob_threshold,
             invert=self.invert
         )
-        # flows & styles can be GC’d once masks saved
+        
         del flows, styles
         return masks.astype(np.uint16)
 
@@ -99,23 +99,33 @@ class Segmenter:
             pos_id = row["id"]
             raw_path = Path(row["raw_path"])
             logger.info(f"Segmenting position {pos_id}")
-            denoised_path = Path(row["denoised_path"])
+            denoised_path_str = row.get("denoised_path", None)
+            if denoised_path_str is None or denoised_path_str == "None":
+                denoised_path = None
+            else:
+                denoised_path = Path(denoised_path_str)
 
-            # compute anisotropy from raw ND2 metadata
+            # compute anisotropy from raw ND2 metadata, if tiff z_ratio is 1
             anisotropy = get_anisotropy(raw_path)
 
             # decide which image to load: denoised if exists, else raw
-            if denoised_path.exists():
+            if denoised_path and denoised_path.exists():
                 img5d = AICSImage(str(denoised_path))
+                logger.info(f"Using denoised image for {pos_id}: {denoised_path.name}")
             else:
                 img5d = AICSImage(str(raw_path))
+                if denoised_path:
+                    logger.warning(f"Denoised image not found for {pos_id}, using raw image: {raw_path.name}")
+                else:
+                    logger.info(f"No denoised path provided, using raw image: {raw_path.name}")
+
 
             for t in range(img5d.dims.T):
                 logger.info(f"{t:02d}: loading volume and running Cellpose")
                 vol = img5d.get_image_data("CZYX", T=t)
-                #print(pos_id, "vol shape:", nuc_vol.shape)  # should be (1, Z, Y, X) with all dims >0
                 nuc_vol = vol[self.nuc_channel : self.nuc_channel + 1]
-
+                print(pos_id, "vol shape:", nuc_vol.shape)  # should be (1, Z, Y, X) with all dims >0
+                
                 masks = self.segment_image(nuc_vol)
                 edt_map = self.calc_edt(masks, anisotropy)
 

@@ -12,7 +12,6 @@ import bioio_nd2
 import bioio_tifffile
 from .utils import timeit
 from .logger import logger
-import matplotlib.pyplot as plt
 
 
 class DistanceAnalyzer:
@@ -79,22 +78,6 @@ class DistanceAnalyzer:
                 logger.warning(f"Mask is empty (all zeros) for t={t:02d} in {position_id}")
                 continue
 
-            # DEBUG: Save overlay of mask + raw for inspection
-            debug_dir = Path("/mnt/external.data/MeisterLab/mvolosko/image_project/spot-detect-lib/scripts/debug_plots")
-            debug_dir.mkdir(exist_ok=True)
-
-            fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-            # Middle Z-slice for both
-            img_zc = img[mask.shape[0] // 2, ..., self.nuc_ch]
-            mask_zc = mask[mask.shape[0] // 2, ...]
-            ax[0].imshow(img_zc, cmap='gray')
-            ax[0].set_title(f"Raw Nucleus Channel t={t}")
-            ax[1].imshow(mask_zc, cmap='gray')
-            ax[1].set_title(f"Mask t={t}")
-            plt.suptitle(f"{position_id}_t{t:02d}")
-            plt.tight_layout()
-            plt.savefig(debug_dir / f"{position_id}_t{t:02d}_debug.png")
-            plt.close()
 
             rp = regionprops_table(
                 mask,
@@ -149,7 +132,7 @@ class DistanceAnalyzer:
         df_csv = df_all.drop(
             columns=["intensity_profile_spots", "intensity_profile_nuc"]
         )
-        df_csv.to_csv(self.out_nuc / f"{position_id}.csv", index=False)
+        #df_csv.to_csv(self.out_nuc / f"{position_id}.csv", index=False)
         # Split per‐timepoint tables
         for t, df_t in df_csv.groupby("timepoint"):
             df_t.to_csv(self.out_nuc / f"{position_id}_t{t:02d}.csv", index=False)

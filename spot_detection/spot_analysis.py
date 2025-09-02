@@ -23,11 +23,10 @@ def detect_spots_watershed(
     min_peak_distance: int = 10,
     peak_min_intensity_factor: float = 0.30,
     min_volume: int = 50,
-    max_volume: int = 1000,
-    intensity_percentile: int = 80,
+    max_volume: int = None,
     nuclei_mask_path: str = None,
     merge_gap: int = 1,
-    save_outputs: bool = False
+    save_outputs: bool = True
 ) -> tuple:
     """
     Detects spots using a watershed segmentation algorithm.
@@ -45,7 +44,6 @@ def detect_spots_watershed(
     - peak_min_intensity_factor: Factor of the max distance to set the minimum peak intensity.
     - min_volume: Minimum volume of a detected spot.
     - max_volume: Maximum volume of a detected spot.
-    - intensity_percentile: Percentile for intensity-based filtering.
     - nuclei_mask_path: Optional path to a nuclei mask for final filtering.
     - merge_gap: The radius of the structuring element for merging close objects.
     - save_outputs: If True, saves the final mask and spot data to a 'results_spots' subdirectory.
@@ -102,26 +100,45 @@ def detect_spots_watershed(
         watershed_line=True
     )
 
+    unique_labels = np.unique(segmented_labels)
+    label_map = np.zeros(segmented_labels.max() + 1, dtype=segmented_labels.dtype)
+    valid_labels = []
+
+    for label in unique_labels:
+        if label == 0:
+            continue # Skip background
+        mask = (segmented_labels == label)
+        if np.sum(mask) >= min_volume:
+            label_map[label] = label # Keep this label
+            valid_labels.append(label)
+        # else: label_map[label] remains 0
+
+    # Apply the mapping
+    final_segmented_image = label_map[segmented_labels]
+
     # 6. Post-Watershed Merging of objects with small gaps
     if merge_gap > 0:
         merge_selem = morphology.ball(merge_gap)
-        binary_from_labels = segmented_labels > 0
+        binary_from_labels = final_segmented_image > 0
         closed_binary = morphology.binary_closing(binary_from_labels, footprint=merge_selem)
         final_labels, num_merged = ndi.label(closed_binary)
         print(f"Relabeled segments after merging: {num_merged}")
     else:
-        final_labels = segmented_labels
+        final_labels = final_segmented_image
         
     # 7. Measure properties and create DataFrame
     props = measure.regionprops_table(
         final_labels,
         intensity_image=image,
-        properties=('label', 'centroid', 'area', 'max_intensity')
+        properties=('label', 'centroid', 'area', 'max_intensity', 'mean_intensity', 'min_intensity')
     )
+
+    # Convert to a DataFrame
     df = pd.DataFrame(props).rename(columns={
-        'centroid-0': 'centroid_z', 'centroid-1': 'centroid_y', 'centroid-2': 'centroid_x',
-        'area': 'volume',
-        'max_intensity': 'intensity'
+        'centroid-0': 'axis-0', 
+        'centroid-1': 'axis-1', 
+        'centroid-2': 'axis-2',
+        'area': 'volume'
     })
 
     match = re.search(r'_t(\d{2})', os.path.basename(image_path))
@@ -134,14 +151,14 @@ def detect_spots_watershed(
     print(f"Initial detected spots: {len(df)}")
 
     # 8. Filtering
-    # Intensity filtering
-    if len(image[image > 0]) > 0 and intensity_percentile < 100:
-        intensity_thresh = np.percentile(image[image > 0], intensity_percentile)
-        df = df[df['intensity'] > intensity_thresh]
-        print(f"After intensity filtering ({intensity_percentile}th percentile): {len(df)} spots")
 
     # Volume filtering
-    df = df[df['volume'].between(min_volume, max_volume)]
+    if max_volume is None:
+        df = df[df['volume'] >= min_volume]
+    elif min_volume is None:
+        df = df[df['volume'] <= max_volume]
+    else:
+        df = df[df['volume'].between(min_volume, max_volume)]
     print(f"After volume filtering (min: {min_volume}, max: {max_volume}): {len(df)} spots")
 
     # Filter labels image to match the filtered DataFrame
@@ -160,9 +177,9 @@ def detect_spots_watershed(
         mask_4d = bioio.BioImage(nuclei_mask_path, reader=bioio_tifffile.Reader)
         nuclei_mask = mask_4d.get_image_data("ZYX", T=0, C=0).astype(bool)
         if nuclei_mask.shape == image.shape:
-            z_coords = np.round(df['centroid_z']).astype(int).clip(0, nuclei_mask.shape[0] - 1)
-            y_coords = np.round(df['centroid_y']).astype(int).clip(0, nuclei_mask.shape[1] - 1)
-            x_coords = np.round(df['centroid_x']).astype(int).clip(0, nuclei_mask.shape[2] - 1)
+            z_coords = np.round(df['axis-0']).astype(int).clip(0, nuclei_mask.shape[0] - 1)
+            y_coords = np.round(df['axis-1']).astype(int).clip(0, nuclei_mask.shape[1] - 1)
+            x_coords = np.round(df['axis-2']).astype(int).clip(0, nuclei_mask.shape[2] - 1)
             
             in_nuclei = nuclei_mask[z_coords, y_coords, x_coords]
             df = df[in_nuclei].copy()
@@ -172,7 +189,12 @@ def detect_spots_watershed(
 
     return df, image, distance_map, final_labels
 
-def analyze_domains_in_shape(image: np.ndarray, shape_mask: np.ndarray, domain_min_size: int, output_dir: str, base_name: str):
+def analyze_domains_in_shape(image_path: str, 
+                            shape_mask: np.ndarray, 
+                            domain_min_size: int, 
+                            output_dir: str, 
+                            base_name: str,
+                            spot_channel: int = 1):
     """
     Analyzes bright domains within larger segmented shapes (e.g., chromosomes).
 
@@ -180,22 +202,27 @@ def analyze_domains_in_shape(image: np.ndarray, shape_mask: np.ndarray, domain_m
     using intensity thresholding and size filtering.
 
     Parameters:
-    - image: The original 3D intensity image.
+    - image_path: The original 3D intensity image.
     - shape_mask: A 3D labeled image where each unique integer corresponds to a segmented shape.
     - domain_min_size: The minimum volume (in voxels) for a bright region to be considered a domain.
     - output_dir: The base directory to save the results.
     - base_name: The base name for the output CSV file.
     """
-    print("\n--- Analyzing Domains within Shapes ---")
-    
+
+    print(f"\n--- Analyzing domains within shapes : {os.path.basename(image_path)} ---")
+
+    # Load Image
+    img_4d = bioio.BioImage(image_path, reader=bioio_tifffile.Reader)
+    image = img_4d.get_image_data("ZYX", C=spot_channel)
+
     # Create a dedicated directory for domain results
-    domain_output_dir = os.path.join(output_dir, 'results_domains')
+    domain_output_dir = os.path.join(output_dir, 'domains')
     os.makedirs(domain_output_dir, exist_ok=True)
     
     all_domains = []
     
     # Iterate through each unique shape label in the mask
-    for label in tqdm(np.unique(shape_mask)[1:], desc="Analyzing domains in shapes"):  # [1:] to skip background
+    for label in tqdm(np.unique(shape_mask)[1:], desc="Analyzing domains in shapes", disable=True):  # [1:] to skip background
         
         # Create a mask for the current shape
         current_shape_mask = (shape_mask == label)
@@ -230,13 +257,14 @@ def analyze_domains_in_shape(image: np.ndarray, shape_mask: np.ndarray, domain_m
             # Filter domains by the user-provided minimum size
             if domain_prop.area >= domain_min_size:
                 all_domains.append({
-                    'parent_shape_label': label,
-                    'domain_centroid_z': domain_prop.centroid[0],
-                    'domain_centroid_y': domain_prop.centroid[1],
-                    'domain_centroid_x': domain_prop.centroid[2],
-                    'domain_volume': domain_prop.area,
-                    'domain_max_intensity': domain_prop.max_intensity,
-                    'domain_mean_intensity': domain_prop.mean_intensity,
+                    'label': label,
+                    'axis-0': domain_prop.centroid[0],
+                    'axis-1': domain_prop.centroid[1],
+                    'axis-2': domain_prop.centroid[2],
+                    'volume': domain_prop.area,
+                    'max_intensity': domain_prop.max_intensity,
+                    'mean_intensity': domain_prop.mean_intensity,
+                    'min_intensity': domain_prop.min_intensity
                 })
 
     if not all_domains:
@@ -277,18 +305,16 @@ def count_spots_in_nuclei(spots_df, mask_path, nuclei_df):
     pixel_sizes = (1.0, 1.0, 1.0)
     
     spots_df = spots_df.copy()
-    axis_map = {'z': 0, 'y': 1, 'x': 2}
+    axis_labels = ['axis-0', 'axis-1', 'axis-2']
     
-    for axis in ['z', 'y', 'x']:
-        ps = pixel_sizes[axis_map[axis]]
-        dim = mask.shape[axis_map[axis]]
+    for axis in axis_labels:
+        ps = pixel_sizes[axis_labels.index(axis)]
+        dim = mask.shape[axis_labels.index(axis)]
         ps_val = ps if ps is not None and ps > 0 else 1.0
-        col_name = f'centroid_{axis}'
-        if col_name not in spots_df.columns:
-            raise ValueError(f"Missing required column: {col_name}")
-            
+        if axis not in spots_df.columns:
+            raise ValueError(f"Missing required column: {axis}")
         spots_df[f'{axis}_idx'] = (
-            spots_df[f'centroid_{axis}']
+            spots_df[axis]
             .div(ps_val)
             .round()
             .astype(int)
@@ -297,9 +323,9 @@ def count_spots_in_nuclei(spots_df, mask_path, nuclei_df):
     
     mask = mask.astype(np.uint32)
     spots_df['nucleus_label'] = mask[
-        spots_df['z_idx'].values,
-        spots_df['y_idx'].values,
-        spots_df['x_idx'].values
+        spots_df['axis-0'].values,
+        spots_df['axis-1'].values,
+        spots_df['axis-2'].values
     ]
     
     if 'nucleus_label' not in spots_df.columns:
@@ -363,25 +389,25 @@ def analyze_spots(
     - domain_min_size: The minimum size for a bright region to be considered a domain. If 0, this step is skipped.
     """
     try:
-        base_name = os.path.splitext(os.path.basename(raw_image_path))[0]
-        os.makedirs(output_dir, exist_ok=True)
+        # base_name = os.path.splitext(os.path.basename(raw_image_path))[0]
+        # os.makedirs(output_dir, exist_ok=True)
         
-        # --- Save the initial spot detection results ---
-        spots_results_dir = os.path.join(output_dir, 'results_spots')
-        os.makedirs(spots_results_dir, exist_ok=True)
+        # # --- Save the initial spot detection results ---
+        # spots_results_dir = os.path.join(output_dir, 'results_spots')
+        # os.makedirs(spots_results_dir, exist_ok=True)
         
-        spot_mask_path = os.path.join(spots_results_dir, f'{base_name}_labels.tif')
-        spot_csv_path = os.path.join(spots_results_dir, f'{base_name}.csv')
+        # spot_mask_path = os.path.join(spots_results_dir, f'{base_name}_labels.tif')
+        # spot_csv_path = os.path.join(spots_results_dir, f'{base_name}.csv')
 
-        io.imsave(spot_mask_path, final_spot_mask.astype(np.uint16), check_contrast=False)
-        print(f"Saved final segmented spot labels to: {spot_mask_path}")
+        # io.imsave(spot_mask_path, final_spot_mask.astype(np.uint16), check_contrast=False)
+        # print(f"Saved final segmented spot labels to: {spot_mask_path}")
 
-        if not spots_df.empty:
-            spots_df.to_csv(spot_csv_path, index=False)
-            print(f"Saved spots data to: {spot_csv_path}")
-        else:
-            pd.DataFrame().to_csv(spot_csv_path, index=False)
-            print("No spots detected; saved an empty CSV file.")
+        # if not spots_df.empty:
+        #     spots_df.to_csv(spot_csv_path, index=False)
+        #     print(f"Saved spots data to: {spot_csv_path}")
+        # else:
+        #     pd.DataFrame().to_csv(spot_csv_path, index=False)
+        #     print("No spots detected; saved an empty CSV file.")
 
         # --- Proceed with analysis using the in-memory spot data ---
         nuclei_df = load_nuclei_data(nuclei_csv_path)

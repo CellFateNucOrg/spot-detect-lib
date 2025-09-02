@@ -27,13 +27,12 @@ def convert_coordinates(df, pixel_sizes, mask_shape):
     """Convert physical coordinates to pixel indices"""
     axis_map = {'z': 0, 'y': 1, 'x': 2}
     coord_df = df.copy()
-    
-    for axis in ['z', 'y', 'x']:
-        ps = pixel_sizes[axis_map[axis]] or 1.0
-        dim = mask_shape[axis_map[axis]]
-        coord_df[f'{axis}_idx'] = (coord_df[f'centroid_{axis}'] / ps).round().astype(int)
-        coord_df[f'{axis}_idx'] = coord_df[f'{axis}_idx'].clip(0, dim - 1)
-    
+
+    for i, axis_name in zip(range(3), ['z', 'y', 'x']):
+        ps = pixel_sizes[i] or 1.0
+        dim = mask_shape[i]
+        coord_df[f'{axis_name}_idx'] = (coord_df[f'axis-{i}'] / ps).round().astype(int)
+        coord_df[f'{axis_name}_idx'] = coord_df[f'{axis_name}_idx'].clip(0, dim - 1)
     return coord_df
 
 def assign_nuclei_labels(spots_df, mask):
@@ -51,6 +50,7 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
 
     results_dir = os.path.join(spots_dir, 'results')
     os.makedirs(results_dir, exist_ok=True)
+    
     combined_df = pd.DataFrame()
 
     nuclei_files = glob.glob(os.path.join(nuclei_dir, '*.csv'))
@@ -78,10 +78,10 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
         nuclei_df['timepoint'] = nuclei_df['timepoint'].astype(int)
         
         # Load spots data
-        spot_pattern = os.path.join(spots_dir, f"{base_id}_spots.csv")
+        spot_pattern = os.path.join(spots_dir, 'spot_segmentation', f"{base_id}_spots.csv")
         spot_files = glob.glob(spot_pattern)
         if not spot_files:
-            print(f"No spots found for {base_id}")
+            print(f"No spots found for {spot_pattern}")
             continue
             
         spots_df = pd.concat([pd.read_csv(f) for f in spot_files], ignore_index=True)
@@ -89,19 +89,19 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
         # Coordinate conversion and label assignment
         spots_conv = convert_coordinates(spots_df, pixel_sizes, mask.shape)
         spots_labeled = assign_nuclei_labels(spots_conv, mask)
-        valid_spots = spots_labeled[spots_labeled['nucleus_label'] > 0]
+        valid_spots = spots_labeled[spots_labeled['nucleus_label'] > 0].copy()
         
         # Aggregate spot data
         if not valid_spots.empty:
             agg_stats = valid_spots.groupby('nucleus_label').agg(
                 spot_count=('label', 'size'),
-                mean_intensity=('intensity', 'mean'),
-                max_intensity=('intensity', 'max')
+                mean_intensity=('mean_intensity', 'mean'),
+                max_intensity=('max_intensity', 'max')
             ).reset_index()
         else:
             agg_stats = pd.DataFrame(columns=['nucleus_label', 'spot_count', 
                                             'mean_intensity', 'max_intensity'])
-        
+
         # Merge with nuclei data
         merged_df = nuclei_df.merge(
             agg_stats,
@@ -123,13 +123,14 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
     
     plot_path = lambda name: os.path.join(results_dir, name)
 
+    # --- Plotting ---
     # Seaborn boxplot (numerical timepoints)
     if not combined_df.empty and combined_df['spot_count'].notnull().any():
         # Optional: filter timepoints that have at least some data
         non_empty_df = combined_df.groupby('timepoint').filter(lambda g: len(g) > 0)
         plt.figure(figsize=(10, 6))
         sns.boxplot(data=non_empty_df, x='timepoint', y='spot_count')
-        plt.title('Spots per nucleus over timepoints')
+        plt.title('Spots per nucleus over time')
         plt.savefig(plot_path('boxplot_spots_over_time.png'))
         plt.close()
     else:
@@ -171,7 +172,7 @@ def analyze_nuclei_and_spots(nuclei_dir, spots_dir, mask_dir):
     dashboard.update_layout(
         height=850,
         width=1300,
-        title_text="Timecourse Spots Analysis Dashboard",
+        title_text="Spots analysis dashboard",
         template='plotly_white',
         showlegend=False  # Optional: cleaner view if many timepoints
     )

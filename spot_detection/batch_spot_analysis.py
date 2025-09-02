@@ -17,6 +17,7 @@ from plotly.subplots import make_subplots
 from aicsimageio import AICSImage
 from spot_analysis import (
     detect_spots_watershed,
+    analyze_domains_in_shape,
     analyze_spots,
     load_nuclei_data,
     count_spots_in_nuclei,
@@ -30,10 +31,6 @@ def split_5d_tiff_to_timepoints(input_path: Path, output_dir: Path) -> None:
     Splits all 5D (T, C, Z, Y, X) TIFFs in a folder into OME-TIFFs per timepoint.
     Outputs to output_dir/raw_images_timelapse/{basename}_t{tt}.tif
     """
-    from aicsimageio import AICSImage
-    import tifffile
-    import numpy as np
-    from pathlib import Path
 
     input_dir = Path(input_path)
     raw_root = Path(output_dir) / "raw_images_timelapse"
@@ -57,8 +54,8 @@ def split_5d_tiff_to_timepoints(input_path: Path, output_dir: Path) -> None:
             czyx = img.get_image_data("CZYX", T=t)
 
             czyx_5d = czyx[np.newaxis, ...] # shape = (1, C, Z, Y, X)
-
-            # Write directly (no need to move axes now!)
+            # Save as OME-TIFF. Writes as 5d with timepooint 1, but possible to remove
+            # an extra dimension if not needed
             out_path = raw_root / f"{base_name}_t{t:02d}.tif"
             tifffile.imwrite(
                 str(out_path),
@@ -75,21 +72,26 @@ def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir,
                         nuclei_csv_dir, spot_channel):
     """
     Processes a single image: detects spots, saves results including 
-    segmentation masks, and runs analysis.
+    segmentation masks
     """
     image_path = os.path.join(input_dir, image_file)
     name_wo_ext = os.path.splitext(image_file)[0]
 
-    # Adjust name
-    if re.search(r'_n2v$', name_wo_ext) and not re.search(r'_t\d\d$', name_wo_ext):
-        base_name = re.sub(r'_n2v$', '_t00', name_wo_ext)
-    else:
-        base_name = re.sub(r'n2v_', '', name_wo_ext)
+    # # Adjust name - Older and stupid
+    # if re.search(r'_n2v$', name_wo_ext) and not re.search(r'_t\d\d$', name_wo_ext):
+    #     base_name = re.sub(r'_n2v$', '_t00', name_wo_ext)
+    # else:
+    #     base_name = re.sub(r'n2v_', '', name_wo_ext)
 
+    # Adjust name: if no _t## at the end, add _t00
+    if not re.search(r'_t\d\d$', name_wo_ext):
+        base_name = f"{name_wo_ext}_t00"
+    else:
+        base_name = name_wo_ext
+        
     # Construct mask and CSV paths
     mask_path = os.path.join(nuclei_mask_dir, f"{base_name}.tif")
     csv_path = os.path.join(nuclei_csv_dir, f"{base_name}.csv")
-
     # Skip if files missing
     if not os.path.isfile(mask_path):
         return {'image': image_file, 'error': f"Missing mask: {mask_path}"}
@@ -105,9 +107,9 @@ def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir,
             selem_radius=4,
             min_peak_distance=20,
             peak_min_intensity_factor=0.20,
+            # peak_min_intensity_factor=0.30,
             min_volume=100,
-            max_volume=1000,
-            intensity_percentile=85,
+            max_volume=None,
             nuclei_mask_path=mask_path,
             merge_gap=1,
             save_outputs=True
@@ -116,38 +118,66 @@ def process_single_image(image_file, input_dir, output_dir, nuclei_mask_dir,
     except Exception as e:
         return {'image': image_file, 'error': f"Detection failed: {str(e)}"}
 
+    try:
+        analyze_domains_in_shape(
+            image_path=image_path,
+            shape_mask=spot_labels,
+            domain_min_size=50,
+            output_dir=output_dir,
+            base_name=base_name
+        )
+    except Exception as e:
+        return {'image': image_file, 'error': f"Domain analysis failed: {str(e)}"}
+
     # Save spot segmentation mask
     spot_seg_dir = os.path.join(output_dir, 'spot_segmentation')
     os.makedirs(spot_seg_dir, exist_ok=True)
     spot_mask_output_path = os.path.join(spot_seg_dir, f"{base_name}_spot_mask.tif")
+    squeezed_labels = np.squeeze(spot_labels).astype(np.uint16)
     tifffile.imwrite(
         spot_mask_output_path,
-        spot_labels[np.newaxis, np.newaxis, ...].astype(np.uint16),
+        squeezed_labels,
+        #spot_labels[np.newaxis, np.newaxis, ...].astype(np.uint16),
         photometric="minisblack",
         metadata={"axes": "ZYX"}
     )
     print(f"Saved spot segmentation mask to: {spot_mask_output_path}")
 
+    spot_csv_output_path = os.path.join(spot_seg_dir, f"{base_name}_spots.csv")
+
+    if not spots_df.empty:
+        spots_df.to_csv(spot_csv_output_path, index=False)
+        print(f"Saved centroids to: {spot_csv_output_path}")
+    else:
+        print("No SDC bodies detected to save centroids.")
+
     # Run downstream analysis
-    try:
-        analyze_spots(
-            spots_csv_path=spots_csv_output_path, 
-            nuclei_csv_path=csv_path, 
-            mask_path=mask_path, 
-            output_dir=output_dir
-        )
+    # try:
+    #     analyze_spots(
+    #             spots_df=spots_df,
+    #             final_spot_mask=spot_labels,
+    #             nuclei_csv_path=csv_path,
+    #             mask_path=mask_path,
+    #             raw_image_path=image_path,
+    #             output_dir=output_dir,
+    #             spot_channel=spot_channel,
+    #             domain_min_size= 50
+    #     )
 
-    except Exception as e:
-        return {'image': image_file, 'error': f"Analysis failed: {str(e)}"}
 
-    return {
-        'image': image_file,
-        'total_spots': len(spots_df),
-        'nuclei_data_available': True,
-        'error': None,
-        'message': f'Successfully processed. Results in {output_dir}',
-        'spot_mask_path': spot_mask_output_path
-    }
+    # except Exception as e:
+    #     return {'image': image_file, 'error': f"Analysis failed: {str(e)}"}
+
+    print(f"Finished processing {image_file}")
+
+    # return {
+    #     'image': image_file,
+    #     'total_spots': len(spots_df),
+    #     'nuclei_data_available': True,
+    #     'error': None,
+    #     'message': f'Successfully processed. Results in {output_dir}',
+    #     'spot_mask_path': spot_mask_output_path
+    # }
 
 
 def batch_process_images(input_dir, output_dir, nuclei_mask_dir, nuclei_csv_dir, spot_channel=1, max_workers=4):
@@ -170,11 +200,18 @@ def batch_process_images(input_dir, output_dir, nuclei_mask_dir, nuclei_csv_dir,
         ]
 
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing images in parallel"):
-            result = future.result()
-            summary_data.append(result)
-            if result.get('error'):
-                print(f"Error for {result['image']}: {result['error']}")
+            try:
+                result = future.result()
+                if result is None:
+                    continue
+                summary_data.append(result)
+                if result.get('error'):
+                    print(f"Error for {result['image']}: {result['error']}")
+            except Exception as e:
+                print(f"Exception while processing image: {e}")
+                continue
+
+
 
     summary_df = pd.DataFrame(summary_data)
-    summary_df.to_csv(os.path.join(output_dir, 'summary.csv'), index=False)
     return summary_df

@@ -40,18 +40,17 @@ if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Batch processing
-    count_spots_dir = OUTPUT_DIR / "count_spots"
-    count_spots_dir.mkdir(parents=True, exist_ok=True)
+    # count_spots_dir = OUTPUT_DIR / "count_spots"
+    # count_spots_dir.mkdir(parents=True, exist_ok=True)
 
     # split_5d_tiff_to_timepoints(
-    #     input_path=INPUT_DIR,
-    #     output_dir=OUTPUT_DIR
+    #     input_path="/mnt/external.data/MeisterLab/mvolosko/image_project/high_res_images/1268/",
+    #     output_dir="/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1268_fast_imaging_01/raw_images_timelapse_all/"
     # )
 
-    combined_results = batch_process_images(
-        input_dir=OUTPUT_DIR / "raw_images_timelapse",
-        #input_dir=INPUT_DIR ,
-        output_dir=count_spots_dir,
+    batch_process_images(
+        input_dir=INPUT_DIR ,
+        output_dir=OUTPUT_DIR,
         nuclei_mask_dir=NUCLEI_MASK_DIR,
         nuclei_csv_dir=NUCLEI_CSV_DIR
     )
@@ -59,34 +58,22 @@ if __name__ == "__main__":
     # Final combine
     analyze_nuclei_and_spots(
         nuclei_dir=NUCLEI_CSV_DIR,
-        spots_dir=count_spots_dir,
+        spots_dir=OUTPUT_DIR,
         mask_dir=NUCLEI_MASK_DIR
     )
 
-    # # #do a QC
-    QC_OUTPUT = BASE_DIR / "qc_3d"
-    QC_OUTPUT.mkdir(parents=True, exist_ok=True)
+    # # # #do a QC
+    # QC_OUTPUT = BASE_DIR / "qc_3d"
+    # QC_OUTPUT.mkdir(parents=True, exist_ok=True)
 
-    batch_render_spots_z_slider(
-        spots_dir=count_spots_dir,
-        mask_dir=NUCLEI_MASK_DIR,
-        raw_img_dir=OUTPUT_DIR / "raw_images_timelapse",
-        #raw_img_dir=INPUT_DIR,
-        domains_path= None,
-        qc_out=QC_OUTPUT,
-        n_samples=5,
-        z_range=(10, 30),
-    )
-    print(f"QC 3D renders saved to {QC_OUTPUT}")
-
-
-    # batch_qc_visualization(
-    #     spots_dir=count_spots_dir,
-    #     nuclei_dir=NUCLEI_CSV_DIR,
+    # batch_render_spots_z_slider(
+    #     spot_mask_parent_dir=OUTPUT_DIR,
     #     mask_dir=NUCLEI_MASK_DIR,
-    #     raw_img_dir=OUTPUT_DIR / "raw_images_timelapse",
-    #     #raw_img_dir=INPUT_DIR,
+    #     #raw_img_dir=OUTPUT_DIR / "raw_images_timelapse",
+    #     raw_img_dir=INPUT_DIR,
+    #     domains_dir= OUTPUT_DIR / "domains",
+    #     #domains_dir = None,
     #     qc_out=QC_OUTPUT,
-    #     n_samples=15,
-    #     z_range=(15, 35)
+    #     n_samples=2,
+    #     z_range=(10, 30),
     # )

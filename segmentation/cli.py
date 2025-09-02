@@ -22,8 +22,10 @@ def cli():
 @click.option('--do-qc/--no-qc', default=False,    help="Save segmentation QC images")
 @click.option('--invert/--no-invert', default=False, help="Invert image intensities before segmentation")
 @click.option('--blur-sigma',   default=None,   type=float, help="Optional gaussian blur sigma before segmentation")
+@click.option('--diameter', default=None, type=float,
+              help="Cell diameter for Cellpose (optional, overrides automatic estimation)")
 
-def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc, invert, blur_sigma):
+def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc, invert, blur_sigma, diameter):
     """
     1. Build file index (raw + optional denoised)  
     2. Run Cellpose segmentation + EDT  
@@ -36,7 +38,7 @@ def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc, invert,
 
     from .segment import Segmenter
     # 2. segment + edt
-    seg = Segmenter(model_path=model, gpu=gpu, invert=invert, blur_sigma=blur_sigma)
+    seg = Segmenter(model_path=model, gpu=gpu, invert=invert, blur_sigma=blur_sigma, diameter=diameter)
     seg.run_on_directory(
         file_index=df,
         out_seg_dir=out_root/"segmentation",
@@ -45,7 +47,7 @@ def segment(raw_dir, denoised_dir, pattern, model, out_root, gpu, do_qc, invert,
         qc_func=lambda vol, m, pid, t: plot_segmentation_slices(
             img_5d=vol,
             masks=m,
-            out_dir=out_root/"qc",
+            out_dir=out_root,
             sample_id=pid,
             timepoint=t
         )
