@@ -80,9 +80,30 @@ To analyze original high-resolution images, you must use the `split_5d_tiff_to_t
 
 ---
 
-## To Do List
+## Apptainer on IZB cluster
 
-* Implement a diameter setting in segmentation scripts.
-* Develop spot detection functionality without requiring prior nuclei segmentation.
-* Integrate a command-line interface (CLI) system for spot detection scripts, allowing settings to be configured via shell scripts without modifying Python source code.
-* Continue to improve the spot detection system (ongoing development).
+### Container
+The continer to execute the scripts is located in the folder on IZB cluster /mnt/external.data/MeisterLab/mvolosko/spot_detection_environment
+
+There are few important files to consider.
+The first one is `Sponuc.def` - an image with which the container was built locally. 
+This image creates a container called `sponuc.sif`, which includes the drivers needed for GPU execution on the cluster. It works with current version of Cuda toolkit 12.9.0. In the future this might need to be updated.
+To build a container, you need to install the Apptainer locally and run the following command:
+```bash
+apptainer build sponuc.sif Sponuc.def
+```
+
+After you can transport the container file `sponuc.sif` to the server and use it there.
+
+### Python envorinment
+Then the micromamba environment was created in the sponuc-env using `sponuc_env.yml`. 
+```bash
+apptainer exec --nv sponuc.sif micromamba create -y -p /envs/sponuc -f sponuc_env.yml
+```
+This environment was installed with minimum requirments, to avoid packages incompatibility. And later the needed packages were installed with requirments.txt via pip.
+In order to install new or update packages inside the environment, the following command should be executed in the spot_detection_environment folder:
+```bash
+#you should update the requirments.txt with packages you want to have
+apptainer exec --nv sponuc.sif micromamba run -p ./sponuc-env pip install -r requirements.txt
+```
+
