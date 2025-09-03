@@ -16,8 +16,8 @@ def parse_args():
     )
     p.add_argument("--base-dir",        type=Path, required=True)
     p.add_argument("--input-dir",       type=Path, required=True)
-    p.add_argument("--nuclei-mask-dir", type=Path, required=True)
-    p.add_argument("--nuclei-csv-dir",  type=Path, required=True)
+    p.add_argument("--nuclei-mask-dir", type=Path, required=False)
+    p.add_argument("--nuclei-csv-dir",  type=Path, required=False)
     p.add_argument("--output-dir",      type=Path, required=True)
     return p.parse_args()
 
@@ -39,15 +39,16 @@ if __name__ == "__main__":
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Batch processing
-    # count_spots_dir = OUTPUT_DIR / "count_spots"
-    # count_spots_dir.mkdir(parents=True, exist_ok=True)
+    # If you have a 5D TIFF file (TCZYX), then this function will split 
+    # the file to 4D for each timepoint (CZYX)
+    # it helps the algorithm to process the data more efficiently and avoid memory crash
 
     # split_5d_tiff_to_timepoints(
     #     input_path="/mnt/external.data/MeisterLab/mvolosko/image_project/high_res_images/1268/",
     #     output_dir="/mnt/external.data/MeisterLab/mvolosko/image_project/SDC1/1268_fast_imaging_01/raw_images_timelapse_all/"
     # )
 
+    # Main processing step
     batch_process_images(
         input_dir=INPUT_DIR ,
         output_dir=OUTPUT_DIR,
@@ -62,18 +63,16 @@ if __name__ == "__main__":
         mask_dir=NUCLEI_MASK_DIR
     )
 
-    # # # #do a QC
-    # QC_OUTPUT = BASE_DIR / "qc_3d"
-    # QC_OUTPUT.mkdir(parents=True, exist_ok=True)
+    # # #do a QC
+    QC_OUTPUT = BASE_DIR / "qc_3d"
+    QC_OUTPUT.mkdir(parents=True, exist_ok=True)
 
-    # batch_render_spots_z_slider(
-    #     spot_mask_parent_dir=OUTPUT_DIR,
-    #     mask_dir=NUCLEI_MASK_DIR,
-    #     #raw_img_dir=OUTPUT_DIR / "raw_images_timelapse",
-    #     raw_img_dir=INPUT_DIR,
-    #     domains_dir= OUTPUT_DIR / "domains",
-    #     #domains_dir = None,
-    #     qc_out=QC_OUTPUT,
-    #     n_samples=2,
-    #     z_range=(10, 30),
-    # )
+    batch_render_spots_z_slider(
+        spot_mask_parent_dir=OUTPUT_DIR,
+        mask_dir=NUCLEI_MASK_DIR,
+        raw_img_dir=INPUT_DIR,
+        domains_dir= OUTPUT_DIR / "domains", #or None if you don't want to detect them
+        qc_out=QC_OUTPUT,
+        n_samples=5, # how many qc images you need
+        z_range=(10, 30), # middle 20 slides
+    )
