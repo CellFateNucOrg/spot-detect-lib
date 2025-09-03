@@ -1,0 +1,14 @@
+aicsimageio
+seaborn
+wandb
+bioio
+bioio-tifffile
+plotly
+tqdm
+tifffile
+scikit-image
+scipy
+cellpose==3.0.8
+matplotlib-scalebar
+bioio-nd2
+edt

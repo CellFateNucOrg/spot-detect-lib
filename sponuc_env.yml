@@ -1,0 +1,24 @@
+name: sponuc
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  # --- Part 1: Install the base environment with Conda ---
+  # These are the heavy, compiled packages that Conda handles best.
+  - python=3.10
+  - pip
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.1 # For GPU acceleration
+
+  # --- Part 2: Install Python packages with Pip ---
+  # Pip's resolver can often handle these application-level dependencies
+  # more smoothly. We list numpy first to ensure your version is prioritized.
+  - pip:
+    - numpy==1.26.4   # Your required numpy version
+    - cellpose
+    - napari[all]     # The '[all]' installs GUI dependencies like pyqt
+    - scikit-learn
+    - matplotlib
+    - imageio

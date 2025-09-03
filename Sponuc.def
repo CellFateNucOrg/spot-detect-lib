@@ -1,0 +1,13 @@
+Bootstrap: docker
+From: nvidia/cuda:12.9.0-runtime-ubuntu22.04
+
+%post
+    apt-get update && apt-get install -y wget bzip2 ca-certificates tar xz-utils
+    # Install micromamba
+    wget -qO- https://micromamba.snakepit.net/api/micromamba/linux-64/latest \
+        | tar -xvj -C /usr/local/bin/ bin/micromamba --strip-components=1
+    chmod +x /usr/local/bin/micromamba
+
+%environment
+    export MAMBA_ROOT_PREFIX=/opt/micromamba
+    export PATH=/usr/local/bin:$PATH
