@@ -52,6 +52,7 @@ mkdir -p "${OUT_ROOT}"
 
 cd ../
 
+# If you want to segment nd2 images, please change --pattern to ".nd2"
 # ——— 1. Segment & EDT ———
 apptainer exec --nv \
     --bind $ENV_PATH:/mnt/env \

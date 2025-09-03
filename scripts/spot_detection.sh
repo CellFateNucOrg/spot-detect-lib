@@ -2,7 +2,7 @@
 #SBATCH --job-name=SPOT_det
 #SBATCH --output=SPOT_det_%j.out          # Errors files will appear in directory with this script
 #SBATCH --error=SPOT_det_%j.err
-#SBATCH --time=1:30:00                    # Max runtime (hh:mm:ss)
+#SBATCH --time=2:30:00                    # Max runtime (hh:mm:ss)
 #SBATCH --mem=124G                        # Memory requested (adjust depending on dataset size)
 #SBATCH --cpus-per-task=4                 # Number of CPU cores per task (parallel processes)
 #SBATCH --ntasks=1
@@ -36,7 +36,7 @@ BASE_DIR="/mnt/external.data/MeisterLab/mvolosko/image_project/final_testing/all
 
 # ----- The Processing ------ 
 
-# Output directories exist
+# Output directories (comment ones with nuclei if you don't need them)
 INPUT_DIR="${RAW_DIR}"
 NUCLEI_MASK_DIR="${BASE_DIR}/segmentation/"
 NUCLEI_CSV_DIR="${BASE_DIR}/nuclei/"
