@@ -71,7 +71,7 @@ if __name__ == "__main__":
         spot_mask_parent_dir=OUTPUT_DIR,
         mask_dir=NUCLEI_MASK_DIR,
         raw_img_dir=INPUT_DIR,
-        domains_dir= OUTPUT_DIR / "domains", #or None if you don't want to detect them
+        domains_dir= None, #OUTPUT_DIR / "domains" if you want to detect them
         qc_out=QC_OUTPUT,
         n_samples=5, # how many qc images you need
         z_range=(10, 30), # middle 20 slides
